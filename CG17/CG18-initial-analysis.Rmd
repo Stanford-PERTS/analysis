@@ -1,0 +1,774 @@
+---
+title: "Preliminary Analysis of the CG18 results"
+author: "Rumen Iliev"
+date: "9/7/2018"
+output:
+  html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: https://raw.githubusercontent.com/PERTS/gymnast/master/Rmd/rmd_styles.css
+    template: ~/Sites/analysis/common/jurassic.html  
+---
+
+
+```{r preparation, results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+########## SET ENVIRONMENT ########## 
+READ_DATE <- "2018-10-01"
+REPO <- "~/Sites/analysis/"
+
+modules::import('tidyr')
+modules::import('jsonlite')
+modules::import('readr')
+modules::import('stats')
+modules::import('dplyr')
+modules::import('stringr')
+modules::import('reshape2')
+modules::import('ggplot2')
+modules::import('lubridate')
+modules::import('metaviz')
+modules::import('xtable')
+modules::import('stargazer')
+
+
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+source(paste0(github_base_path,"R/util.R"), local = TRUE)
+source(paste0(github_base_path,"R/util_qualtrics_cleaning.R"), local = TRUE)
+source(paste0(github_base_path,"R/util_graphing.R"), local = TRUE)
+source(paste0(github_base_path,"R/util_scale_computation.R"), local = TRUE)
+source(paste0(github_base_path,"R/util_data_summaries.R"), local = TRUE)
+
+
+# set stringsAsFactors to FALSE, and add any other global R settings
+options(stringsAsFactors = FALSE)
+options(warnings = FALSE)
+knitr::opts_chunk$set(warnings = FALSE)
+#knitr::opts_chunk$set(fig.width=8, fig.height=14)
+
+########## LOAD DATA ######################
+
+
+s_raw_paths <- util.find_crypt_paths(
+    list(
+        complete = "CG18_OFFICIAL_1_" %+% READ_DATE %+% ".csv",
+        partial = "CG18_OFFICIAL_1-Responses in Progress_" %+% READ_DATE %+% ".csv",
+        test_cutoffs = "test_date_cutoffs_CG18.csv"
+    )
+)
+
+test_cutoffs <- read.csv(s_raw_paths$test_cutoffs)
+
+s_complete <- read.csv(s_raw_paths$complete) %>%
+    mutate(in_progress = NA)
+s_partial <- read.csv(s_raw_paths$partial)
+
+d_initial <- qc.clean_qualtrics(s_complete) %>%
+    qc.rbind_inprogress(s_partial, .)
+
+
+names(d_initial)[names(d_initial) %in% "race"] <- paste0("race.", 1:length(names(d_initial)[names(d_initial) %in% "race"]))
+names(d_initial)[names(d_initial) %in% "race_revised"] <- paste0("race_revised.", 1:length(names(d_initial)[names(d_initial) %in% "race_revised"]))
+
+
+# define d_rn (will stand for d, renamed)
+d_rn <- d_initial
+
+
+# race_values_revised <- c("AA", "Asian", "Lat", "Nat", "ME", "PI", "Eu", "Oth")
+# those above are the codes from CG 18
+# when I look at the CG18 survey print, it seems I need to use the following order
+race_values_revised <- c("AA", "Asian", "Lat", "ME", "Nat", "PI", "Eu", "Oth")
+
+
+old_race_cols_revised <- names(d_rn)[grep("race_revised\\.[0-9]+$", names(d_rn))]
+new_race_cols_revised <- gsub("\\.[0-9]+", "", old_race_cols_revised) %+% "_" %+% race_values_revised
+
+names(d_rn) <- util.recode(names(d_rn), old_race_cols_revised, new_race_cols_revised)
+
+
+
+#### Standardize column values
+# d_rc will stand for "d, recoded"
+d_rc <- d_rn
+
+# 1 is post treatment, so the directionality of the test will makes sense,
+# where positive relationship between dv and treatment means increase in the dv
+d_rc$post_treatment <- util.recode(d_rc$q_block_position, c("pre","post"), c(0,1))
+
+names(d_rc) <- gsub("race_revised_", "race_", names(d_rc))
+
+# compute the simplified categories
+d_rc$race_simplified <- NA
+d_rc$race_simplified[d_rc$race_Asian | d_rc$race_Eu] <- "White/Asian"
+d_rc$race_simplified[d_rc$race_AA | d_rc$race_Lat | d_rc$race_Nat | d_rc$race_Oth |
+                       d_rc$race_PI | d_rc$race_ME] <- "Blk/Nat/Lat/Oth"
+d_rc$race_disadv <- d_rc$race_simplified %in% "Blk/Nat/Lat/Oth"
+d_rc$race_disadv[is.na(d_rc$race_simplified)] <- NA
+#table(d_rc$race_simplified , exclude = NULL)
+#table(d_rc$race_disadv , exclude = NULL)
+
+new_student_key <- list(old = c(1,2,3), new = c("incoming", "new", "returning"))
+d_rc$new_student <- util.recode(
+    d_rc$new_student,
+    new_student_key$old,
+    new_student_key$new
+)
+
+gender_key <- list(old = c(1,2,3), new = c("Male", "Female", "Nonbinary"))
+d_rc$gender <- util.recode(d_rc$gender, gender_key$old, gender_key$new)
+
+d_rc$gender_simplified <- util.recode(d_rc$gender, "Nonbinary", "Female")
+d_rc$female <- d_rc$gender_simplified %in% "Female"
+d_rc$female[is.na(d_rc$gender)] <- NA
+#table(d_rc$gender_simplified, exclude = NULL)
+#table(d_rc$female, exclude = NULL)
+
+activity2_key <- list(
+    old = c(1, 2, 3, 4, 5),
+    new = c("read out loud", "handout", "discussed only", "no instructions", "dont remember")
+)
+
+d_rc$activity_2 <- util.recode(d_rc$activity_2, activity2_key$old, activity2_key$new)
+
+student_loc_key <- list(old = c(1,2,3), new = c("homework", "in class", "homework"))
+d_rc$student_loc <- util.recode(d_rc$student_loc, student_loc_key$old, student_loc_key$new)
+
+
+wrap_text <- function(text, width=35) {
+    wtext <- paste( strwrap(text,width=width), collapse=" \n ")
+    return(wtext)
+}
+
+d_rc$organization_name_wrapped <- sapply(d_rc$organization_name, function(x) wrap_text(x, 15))
+
+
+### Clean rows
+
+#### Remove testers (d, no testers)
+# ....
+
+d_nt <- d_rc
+
+# remove incomplete cases
+d_nt <- d_nt %>% filter(!is.na(Q6.1))
+
+
+# check participation dates for different colleges
+d_nt$StartDate_dt <- as.Date(d_nt$StartDate)
+d_nt$StartDate_year <- year(d_nt$StartDate_dt)
+d_nt$StartDate_week <- sprintf( "%02d", month(d_nt$StartDate_dt))
+d_nt$year_month <- paste0(d_nt$StartDate_year, "_", d_nt$StartDate_week)
+#d_nt$after_PREVIOUS_REPORT_DATE <- d_nt$StartDate_dt > as.Date(PREVIOUS_REPORT_DATE)
+#table(d_nt$organization_name, d_nt$year_month, exclude = NULL)
+#table(d_nt$organization_name, d_nt$after_PREVIOUS_REPORT_DATE, exclude = NULL)
+
+# remove Arnrow's testers too
+d_nt <- d_nt[!d_nt$organization_name %in% "Arnrow Test U", ]
+
+
+
+#### Logic for handling duplicated index values
+
+# the index in this dataset is participant_id
+# 1. Remove all rows where participant ID is NA
+# 2. Where IDs are duplicated, take each participant's most recent entry
+
+# d_dh stands for d, duplicates handled
+d_dh <- d_nt
+
+## before handling duplicates, remove super fast participants (less than 120 seconds)
+d_dh$time_diff <- ( ymd_hms(d_dh$EndDate) -   ymd_hms(d_dh$StartDate))  %>% as.numeric
+# run a quick check
+d_dh[, c("time_diff", "EndDate", "StartDate")] %>% head
+
+util.passed( sum(d_dh$time_diff < 120) %+% " records will be removed because" %+%
+               " they took less than 2 minutes to complete")
+d_dh <- d_dh %>% filter(time_diff >= 120)
+
+# handle duplicates
+pid_is_blank <- util.is_blank(d_dh$participant_id)
+util.passed(sum(pid_is_blank) %+% " rows removed with blank participant ids. " %+%
+                "These likely correspond to testers.")
+d_dh <- d_dh[!pid_is_blank, ]
+
+d_dh <- d_dh %>%
+    group_by(participant_id) %>%
+    arrange(StartDate) %>%
+    mutate(id_instance = 1:n(),
+           max_instances = n(),
+           keep = id_instance == max_instances)
+
+n_dropped <- sum(!d_dh$keep)
+d_dh <- d_dh[d_dh$keep, ]
+
+util.passed("Records corresponding to " %+% n_dropped %+% " rows " %+%
+                "were removed as duplicates. (" %+%
+                as.character(round(n_dropped/nrow(d_dh), 2)*100) %+%
+                "% of data.) Where participant IDs were duplicated, " %+%
+                "the chronically last entry was always kept.")
+
+util.passed("After handling duplicates, " %+% nrow(d_dh) %+%
+                " rows remain in the final data.frame.")
+
+if(any(duplicated(d_dh$participant_id))){
+    util.warn("duplicates remain in object d_dh after duplicates " %+%
+                  "should have been cleaned. Investigate further.")
+}
+
+
+## compute scales & change scores
+
+## compute scales & change scores
+
+#all_items <- read.csv(REPO %+% "CG17/CG17_variable_descriptions.csv")
+
+d_scales <- d_dh
+# examine or compute DVs
+d_scales$persist_intent %>% table
+d_scales$tutoring_stigma %>% table
+d_scales$challenge_seeking %>% table
+# the values needs to recoded, this should be 6-point scale, not 7
+d_scales$challenge_seeking <- d_scales$challenge_seeking %>% util.recode(c(6,7), c(5,6))
+
+d_scales$inst_gms_1 %>% table
+d_scales$inst_gms_2 %>% table
+cor.test(d_scales$inst_gms_1, d_scales$inst_gms_2)
+d_scales$inst_gms <- rowMeans(d_scales[, c("inst_gms_1", "inst_gms_2")], na.rm = TRUE)
+
+
+d_scales$gms_1 %>% table
+d_scales$gms_5 %>% table
+cor.test(d_scales$gms_1, d_scales$gms_5)
+d_scales$gms <- rowMeans(d_scales[, c("gms_1", "gms_5")], na.rm = TRUE)
+
+
+
+####
+# check randomization
+d_scales$post_treatment %>% table(exclude = NULL) # looks good
+table(d_scales$organization_name, d_scales$post_treatment) # looks good
+
+# test for main effects
+dv_vars <- c("persist_intent", "tutoring_stigma", "challenge_seeking", "inst_gms", "gms")
+
+get_stats_test_1 <- function(in_df, dv_var, nesting_var = "organization_id") {
+  # uses lmer, nesting variable is always organization
+  # I will run random intercept only
+  in_df$dv <- in_df[[dv_var]]
+  in_df$org_var <- in_df[[nesting_var]]
+  smr <- lmerTest::lmer(dv ~ post_treatment + (1|org_var), data=in_df) %>% summary
+  output_df = data.frame(
+    dv_var = dv_var,
+    est = smr$coefficients[2,1],
+    std_err = smr$coefficients[2,2],
+    t = smr$coefficients[2,4],
+    p = smr$coefficients[2,5]
+  )
+}
+
+
+get_stats_test_2 <- function(in_df, dv_var) {
+  # uses lm
+  in_df$dv <- in_df[[dv_var]]
+  smr <- lm(dv ~ post_treatment, data=in_df) %>% summary
+  output_df = data.frame(
+    dv_var = dv_var,
+    est = smr$coefficients[2,1],
+    std_err = smr$coefficients[2,2],
+    t = smr$coefficients[2,3],
+    p = smr$coefficients[2,4]
+  )
+  return(output_df)
+}
+
+#lmer version, takes too long, results are the same
+#test1_df <- data.frame()
+#for (dv_var in dv_vars) {
+# current_df <- get_stats_test_1(d_scales, dv_var)
+# test1_df <- bind_rows(test1_df, current_df)
+#}
+#head(test1_df)
+
+#lm version
+test1a_df <- data.frame()
+for (dv_var in dv_vars) {
+ current_df <- get_stats_test_2(d_scales, dv_var)
+ test1a_df <- bind_rows(test1a_df, current_df)
+}
+#test1a_df %>% util.html_table()
+
+
+test2_df <- data.frame()
+for (dv_var in dv_vars) {
+  print(dv_var)
+  for (organization_name in unique(d_scales$organization_name)) {
+    org_df <- d_scales[d_scales$organization_name %in% organization_name, ]
+     if (nrow(org_df) > 30) {
+        current_df <- get_stats_test_2(org_df, dv_var)
+        current_df$organization_name <- organization_name
+        test2_df <- bind_rows(test2_df, current_df)
+     }
+  }
+}
+#View(test2_df)
+
+
+# check means (it looks consistent with lm)
+
+tbl_means <- d_scales %>% group_by(post_treatment) %>% 
+  summarise(
+    persist_intent = mean(persist_intent, na.rm = T), 
+    tutoring_stigma = mean(tutoring_stigma, na.rm = T), 
+    challenge_seeking = mean( challenge_seeking, na.rm = T), 
+    inst_gms = mean( inst_gms, na.rm = T),
+    gms = mean(gms , na.rm = T)
+  ) 
+
+
+# https://cran.r-project.org/web/packages/metaviz/vignettes/metaviz.html
+```
+
+## Attrition effects
+The table bellow shows the percentage of missing values for each of the DVs in the two conditions. The p-value is based on a Chi-square test.
+
+```{r attr_tbls, results = 'asis',  echo=FALSE, warning=FALSE}
+
+
+# quickly check time differese
+#d_scales %>% group_by(post_treatment) %>%
+#  summarise(time_diff = mean(time_diff, na.rm = T))
+
+# create attrition proportions for each DV and chi-sq p.value
+melted_df <- d_scales[,c(dv_vars,"post_treatment")] %>% melt(id.vars = c("post_treatment"))
+
+df_perc <- melted_df %>% group_by(variable, post_treatment) %>%
+  summarise(percent_missing = sum(is.na(value))/n()*100
+            ) %>% 
+  dcast(variable ~ post_treatment)
+
+df_p.val <- melted_df %>% group_by(variable) %>%
+  summarise(p.val = (table(is.na(value),post_treatment) %>% chisq.test())$p.value
+            )
+
+df_attrition <- merge(df_perc, df_p.val, by = "variable") %>% 
+  rename('pre' = '0', 'post' = '1')
+ 
+
+df_attrition[,2:4] <- df_attrition[,2:4] %>% round(.,3)
+util.html_table(df_attrition)
+
+# check how many did not reach intervention by condition
+# d_scales$Q4.40_1 %>% is.na() %>% table(., d_scales$post_treatment,exclude = NULL)
+# total 6, this looks quite low
+
+# check if proportion of conditions looks different now
+# about 150 more in the pre condition, not significantly different
+cat("<br><br>Check if the sample sizes differ by condition (pre = 0, post = 1)")
+d_scales$post_treatment %>% table() %>% util.html_table()
+cat("The difference is not statistically significant.<br>")
+d_scales$post_treatment %>% table() %>% chisq.test()  %>% print()
+# d_scales$post_treatment %>% table() %>% chisq.test() 
+
+```
+
+## Participation summaries
+### By Demographics  
+```{r demogr_tbls, results = 'asis',  echo=FALSE, warning=FALSE}
+demographics_tbl <- d_scales %>% 
+  group_by(gender_simplified, race_simplified) %>%
+  summarise(
+    count = n()
+  ) %>% 
+  as.data.frame() %>%
+  dplyr::filter(!is.na(gender_simplified)) %>%
+  dplyr::filter(!is.na(race_simplified))
+
+demographics_tbl %>% util.html_table()
+```
+
+### By Schools  
+
+
+*List of schools with more than 200 particapants.* 
+
+```{r schools_freq, results = 'asis',  echo=FALSE, warning=FALSE}
+frequencies_by_school <- d_scales %>% 
+  group_by(organization_name) %>%
+  summarise(
+    count = n()
+  ) %>% 
+  arrange(-count)
+# display only schools with more than 100 entries
+
+frequencies_by_school %>% dplyr::filter(count > 200) %>% util.html_table()
+
+# display a historgram
+```
+
+*Frequency distribution of participation by school*  
+
+```{r schools_hist, results = 'asis',  echo=FALSE, warning=FALSE}
+hist_gg <-ggplot(frequencies_by_school, aes(x=count)) + 
+  geom_histogram(color="black", fill="red") +
+  xlab("Participants per school") +
+  ylab("Schools' frequencies")
+hist_gg
+```
+
+
+## Main Analyses
+
+### DVs
+
+#### persist_intent
+I intend to complete my degree at <organization short name>.
+
+#### inst_gms
+When instructors at <school name> criticize students, they are trying to find out which students have more or less academic potential.  
+In general, most instructors at <organization’s short name> seem to believe that some students are smart, while others are not.  
+
+#### tutoring_stigma
+If a student visits <organization’s short name>’s tutoring or academic help center a lot, that means they probably won’t do well in their classes. 
+
+#### challenge_seeking
+I look forward to taking classes at <college name> where the work is really hard for me.
+
+
+#### gms
+You can learn new things, but you can’t really change your basic intelligence.  
+Your intelligence is something about you that you can't change very much.   
+
+
+
+### Descriptive statistics of DVs
+
+```{r dv_descriptives, results = 'asis',  echo=FALSE}
+ds.summarize_by_column(d_scales[,dv_vars]) %>% 
+    head() %>%
+    util.html_table()
+```
+
+### Correlations between DVs
+```{r dv_correlations, results = 'asis',  echo=FALSE}
+# check if persist_intent is positively correlated with the others 
+cor_matr <- cor(d_scales[,dv_vars], use = "pairwise.complete.obs") %>% round(.,2) 
+
+cor_matr[upper.tri(cor_matr)] <- ""
+
+
+
+## create Tex-Code
+cat("Correlation table")
+stargazer::stargazer(cor_matr, title = "Correlations between DVs", type = "html")
+```
+
+## Test 1: Overall main effects
+
+In this test we check if there is a main effect of treatment on any of the dependent variables. The table bellow shows that there are main effects for all five DVs, but one of them is in the wrong direction.
+```{r test1, results = 'asis',  echo=FALSE}
+test1a_df %>% util.html_table()
+```
+
+## Test 2: Main effects by school
+In this test we check the main effects of treatment separately for each school. The graphs bellow show the beta coefficients for each school, the confidence intervals and the overall effect (bottom, labelled "Summary effect").  
+Positive beta coefficients stand for effect in the predicted direction, negative ones, for effect in the wrong direction.
+```{r forest_graphs, results = 'asis',  echo=FALSE, fig.width=8, fig.height=12, , warning=FALSE}
+# create a table for displaying p-values
+p_val_tbl <- data.frame()
+p_val_tbl_main_effect <- data.frame() # this table will comapre the school results to the overall trend, not to 0
+
+# compute main effects
+
+for (var in unique(test2_df$dv_var)) {
+  df <- test2_df[test2_df$dv_var == var,] %>% 
+  arrange(est)
+  fig <- viz_forest(x = df[, c("est", "std_err")], study_labels = df[, c("organization_name")],
+             summary_label = "Summary effect", xlab = paste0("Regression coefficients for ",var))
+  print(fig)
+  
+  current_df <- data.frame (
+    dv = var,
+    sign_right = sum(df$p <.05 & df$est > 0),
+    sign_wrong = sum(df$p <.05 & df$est < 0),
+    total = nrow(df)
+  )
+  
+  # this data frame will check if the effects are more than two standard errors away
+
+  high_limit <- test1a_df$est[test1a_df$dv_var == var] + 2*df$std_err
+  low_limit <- test1a_df$est[test1a_df$dv_var == var] - 2*df$std_err
+  
+  current_df_main_effect <- data.frame (
+    dv = var,
+    sign_higher = sum(df$est > high_limit),
+    sign_lower = sum(df$est < low_limit),
+    main_effect_overall = test1a_df$est[test1a_df$dv_var == var],
+    total = nrow(df)
+  )
+  
+  p_val_tbl <- bind_rows(p_val_tbl, current_df)
+  p_val_tbl_main_effect <- bind_rows(p_val_tbl_main_effect, current_df_main_effect)
+}
+```
+
+### Count of significant schools by variable  
+
+The table bellow summarizes the data from the five graphs above and presents how many shools show significant main effect in the predicted and in the unpredicted directions.  
+
+```{r count_sign_results, results = 'asis',  echo=FALSE, fig.width=8, fig.height=12, , warning=FALSE}
+cat("<br>Count of significant results <br>")
+p_val_tbl %>% util.html_table()
+
+
+# check the schools which are significantly different from the main effect estimate
+```
+
+### Count schools which significantly differ from the overall trend
+
+
+```{r count_sign_results_main_trend, results = 'asis',  echo=FALSE, fig.width=8, fig.height=12, , warning=FALSE}
+cat("<br>Count of results significantly higher or lower than the main trend <br>")
+p_val_tbl_main_effect %>% util.html_table()
+
+
+# check the schools which are significantly different from the main effect estimate
+```
+
+
+
+### Main affect variability across schools
+The table bellow shows if the variability of the main effects across schools are significantly different from chance. Essentially, it is a comparision between random intercept and random slopes lmer models. Accroding these tests, there seems to be a substantial variability across schools, weakest for `gms`, strongest for `persist_intent`.
+
+```{r slope_variability, results = 'asis',  echo=FALSE}
+# check if the slopes have substantial variability across sites
+#http://www.bodowinter.com/tutorial/bw_LME_tutorial2.pdf
+
+compare_lmers <- function(in_df, dv_var, nesting_var = "organization_id") {
+  # uses lmer, nesting variable is always organization
+  # I will run random intercept only
+  in_df$dv <- in_df[[dv_var]]
+  in_df$org_var <- in_df[[nesting_var]]
+
+  random_intercepts <- lmerTest::lmer(dv ~ post_treatment + (1|org_var), data=in_df)
+  random_slopes <- lmerTest::lmer(dv ~ post_treatment + (1 + post_treatment|org_var), data=in_df)
+  smr <- anova(random_intercepts, random_slopes) 
+  output_df = data.frame(
+    dv_var = dv_var,
+    AIC_delta = smr[1,2] - smr[2,2],
+    Chisq = smr[2,6],
+    "Pr(>Chisq)"  = smr[2,8]
+  )
+  return(output_df)
+}
+
+compare_lmers_df <- data.frame()
+for (dv_var in dv_vars) {
+ current_df <- compare_lmers(d_scales, dv_var)
+ compare_lmers_df <- bind_rows(compare_lmers_df, current_df)
+}
+compare_lmers_df %>% util.html_table()
+```
+
+
+## Test 3 Overall Moderation
+### Moderation by gender and race
+
+The table bellow shows tests for moderation by race and gender for eachf of the five DVs. The graphs help to understand the directionality of the effects.
+
+```{r overall_moderation, results = 'asis',  echo=FALSE, eval = TRUE, fig.width=8, fig.height=8, , warning=FALSE}
+# test 3
+# use ds.summarize for moderation by gender and race
+
+dvs = dv_vars # dependent variables each run independently
+ivs = c("post_treatment") # independent variables each run independently
+mods = c("is_white","is_male")  # moderators each run independently
+cov_groups = list(
+    c()  # unadjusted
+)  # vectors of covariates to run together
+
+formulas <- ds.build_glm1_formulas( 
+            dvs=dvs, ivs=ivs, mods=mods, cov_groups = cov_groups
+        )
+
+data <- d_scales
+
+data$is_white <- util.recode(data$race_simplified, c("Blk/Nat/Lat/Oth","White/Asian"), c(0,1))
+data$is_male <- util.recode(data$gender_simplified, c("Female","Male"), c(0,1))
+
+# run the models
+models     <- ds.glm1s(formulas, data)
+
+# summarize the models into an easy-to-filter df
+summary_df <- ds.get_model_summary_df(models, summary_func=ds.summarize_glm1)
+# ds.summarize_glm1 extracts many features
+summary_df <- summary_df %>% dplyr::select(dv, mod, int_apa)
+
+cat("<h2> Moderation Summary Table </h2>")
+summary_df %>% arrange(mod) %>% util.html_table()
+
+
+
+# visualise interactions with ggplot
+selected_vars <- c("participant_id", "is_male", "is_white", "post_treatment", dv_vars)
+melted_df <- data[,selected_vars] %>%  melt(id.vars = c("participant_id", "is_male", "is_white", "post_treatment"), value.name = "value")
+
+# display gender interactions
+df <-melted_df %>% dplyr::filter(!is.na(is_male))
+mod_by_gender_gg <- 
+  ggplot( 
+    df, 
+    aes( is_male, value, fill=post_treatment, color=post_treatment) 
+  ) +
+  geom_bar( stat="summary", fun.y="mean", position=ug.dodge) +
+  scale_y_continuous() +
+  ug.se_error_bar + 
+  ylab("Value") + 
+  xlab("is_male") +
+  scale_colour_manual(  # sets bar border to black
+    guide="none", # removes the color guide
+    values=rep("black",2) # adjust to # of fills
+  ) + 
+  facet_grid(cols = vars(variable))
+
+cat("<h2> Moderation by Gender Graph </h2>")
+mod_by_gender_gg
+
+
+df <-melted_df %>% dplyr::filter(!is.na(is_white))
+mod_by_race_gg <- 
+  ggplot( 
+    df, 
+    aes( is_white, value, fill=post_treatment, color=post_treatment) 
+  ) +
+  geom_bar( stat="summary", fun.y="mean", position=ug.dodge) +
+  scale_y_continuous() +
+  ug.se_error_bar + 
+  ylab("Value") + 
+  xlab("is_white") +
+  scale_colour_manual(  # sets bar border to black
+    guide="none", # removes the color guide
+    values=rep("black",2) # adjust to # of fills
+  ) + 
+  facet_grid(cols = vars(variable))
+
+cat("<h2> Moderation by Race Graph </h2>")
+mod_by_race_gg
+```
+
+### Moderation by pre-scores
+
+In this analysis we check if the schools' pre- results for each dv moderate the 
+main effect. The formula is:  
+lmer(current_dv ~ post_treatment + (1|organization_name), data = current_df)
+
+```{r moderation_by_variable_pre_score, results = 'asis',  echo=FALSE, eval = TRUE, fig.width=9, fig.height=5, , warning=FALSE}
+school_means_df <- data.frame()
+moderation_by_pre_display_tbl <- data.frame() 
+for (dv_var in dv_vars) {
+  current_df <- d_scales
+  current_df$current_dv <- current_df[[dv_var]]
+  current_df <- current_df %>% as.data.frame()
+  # compute mean pre by school
+  school_means <- current_df %>% dplyr::filter(post_treatment == "0") %>% 
+    group_by(organization_name) %>% 
+    summarise(current_dv_scool_mean = mean(current_dv, na.rm = T))
+  
+  
+  
+  current_df <- merge(current_df, school_means, by = "organization_name")
+  
+  fit <- lmerTest::lmer(current_dv ~  post_treatment * current_dv_scool_mean + (1|organization_name), data = current_df)
+  current_display_tbl <- data.frame(
+    dv_var = dv_var,
+    interaction_t = summary(fit)$coefficients[4,4] %>% round(., 4),
+    interaction_p = summary(fit)$coefficients[4,5] %>% round(., 4)
+    
+  )
+  moderation_by_pre_display_tbl <- bind_rows(moderation_by_pre_display_tbl, current_display_tbl)
+
+  school_means$dv_var = dv_var
+  school_means_df <- bind_rows(school_means_df, school_means)
+}
+
+cat(
+  "The table bellow shows the interaction between the treatment and the pre-scores for a given variable. All interactions are significant."
+)
+moderation_by_pre_display_tbl %>% util.html_table
+
+school_means_df <- merge(school_means_df, test2_df, by = c("dv_var", "organization_name"))
+
+# create scatterplots depicting the moderation between schools.
+cat("Another way to look at the moderating role of pre-scores is to compare them to the esimated effect of the intervention. The scatterplot bellow depict the moderation of the main effect by the school average pre-score. Each dot represents a school. On the y-axis we have the mean pre-score for that school. On the x-axis we have the estimated beta coefficient for that school. In all cases the correlations between the two variables is significant, ranging between -0.3 to -0.6.")
+gg_moderation_be_pre_scores <- school_means_df %>% 
+  ggplot(
+    aes(x = est, y = current_dv_scool_mean)
+  ) + 
+  geom_point() +
+  ylab("Pre-intervention school mean") +
+  xlab("Estimated main effect") + 
+  facet_grid(cols = vars(dv_var))
+print (gg_moderation_be_pre_scores)
+
+# check correlations
+# for (dv_var_x in unique(school_means_df$dv_var)) {
+#  print(dv_var_x)
+#  current_df <- school_means_df %>% dplyr::filter(dv_var == dv_var_x)
+#  cor.test(current_df$est, current_df$current_dv_scool_mean) %>% print
+#}
+
+
+# make it into graphs - 
+
+# scatter plot - mean-pre by effect
+
+```
+
+```{r create_quotes_file, results = 'asis',  echo=FALSE, eval = FALSE}
+# Create a file with Quotes for Arnrow
+# From Sarah's description
+#we need at least 7-8 student quotes for each participating school. Could you make Arnrow a little csv with one row per student open-ended response, and a column indicating project-cohort ID? Give her like 15 randomly selected quotes per school and filter them to quotes with nchars > 50 or something like that. Then she can go in by hand and delete any that she doesn't like. Only do this for schools with >25 responses, to protect student anonymity.
+
+d_quotes_local <- data_wide[,c( # here you  need data_wide from CG18_reports_metascript.R 
+  "organization_id", 
+  "organization_name",
+  "participant_id",
+  "Q4.21",
+  "Q4.51",
+  "Q4.7")]
+
+inlclude_orgs <- d_quotes_local %>% 
+  group_by(organization_id) %>%
+  summarise(n = n()) %>%
+  dplyr::filter(n >=5) %>%
+  dplyr::filter(!util.is_blank(organization_id)) %>% # here you  need d_quotes from CG18_reports_metascript.R 
+  dplyr::filter(!organization_id %in% unique(d_quotes$organization_id)) %>%
+  dplyr::filter(n > 30)
+
+inlclude_orgs
+
+
+
+
+d_quotes_local <- d_quotes_local[d_quotes_local$organization_id %in% inlclude_orgs$organization_id,]
+set.seed(1)
+d_quotes_filtered <- d_quotes_local %>% 
+  melt(id.vars = c("organization_id", "organization_name","participant_id")) %>%
+  mutate(n_chars = nchar(value),
+         rand_index = sample(1:n(), replace = FALSE)) %>%
+  dplyr::filter(variable %in% c("Q4.51")) %>% # check with Sarah which questions to include
+  dplyr::filter(n_chars >= 100) %>% # median is about 365
+  arrange(rand_index) %>% # this is based on a random string, so I can use it as randomization
+  group_by(organization_id) %>%
+  mutate(row_number_index = row_number()) %>% 
+  mutate(include = 0) %>%
+  dplyr::filter(row_number_index <= 14) %>%
+  mutate(max_row_number = max(row_number_index)) %>%
+  mutate(include = ifelse(max_row_number <= 7, 1,0)) %>%
+  dplyr::select(organization_id, row_number_index, value, include) %>% 
+  arrange(organization_id)
+
+
+
+write.csv(d_quotes_filtered,"~/Desktop/CG18_raw_quotes_additional_2.csv", row.names = FALSE)
+
+```

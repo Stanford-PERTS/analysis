@@ -1,0 +1,1453 @@
+---
+title: "EP Dashboard 2018-2019"
+author: "Daniel Greene"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  pdf_document:
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+  html_document:
+    fig_caption: yes
+    fig_height: 7
+    fig_width: 9
+    toc_depth: 2  
+---
+
+# Summary
+
+This document summarizes progress toward our goals for the 2018-2019 implementation of the Engagement Project at PERTS.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+```
+
+```{r, results='hide'}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+options(xtable.comment = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    library(tidyverse)
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    gymnast_install()
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(scales)
+
+repair_pdds <- function(in_cell) {
+  # it seems that in some cases the pdds are wrong
+  # instead of __pdd__ we have _pdd__
+  out_cell <- gsub("([^_])_pdd", "\\1__pdd", in_cell)
+  return (out_cell)
+}
+repair_2nd_row <- function(in_df) {
+  # it seems that in some cases the pdds are wrong
+  # instead of __pdd__ we have _pdd__
+  in_df[1,] <- in_df[1,] %>% apply (., 1, function(x) repair_pdds(x))
+  return (in_df)
+}
+
+extract_number <- function(vec) {
+  # extract the first matching number from a mixed number-letter string vector.
+  str_extract(vec, "-?[[:digit:]]+") %>% as.numeric()
+}
+
+pct_over_80 <- function(x) {
+    if (util.is_vector_of_numbers(x)) { return(sum(x>=.8, na.rm = TRUE) / length(x))}
+    else {return(NA)}
+}
+
+# format percents nicely
+smart_percent <- function(vec) {
+  ifelse(is.na(vec),
+         percent(0, accuracy = 1),
+         percent(vec, accuracy = 1))
+}
+
+# get driver associated with a question_code (uses items sheet)
+# assumes that q_code is unique in items
+get_driver_for_item <- function(q_code, items) {
+  items[items$question_code %in% q_code, "driver"][1]
+}
+get_driver_for_item_vec <- Vectorize(get_driver_for_item)
+
+# Set "today" - by default, use the real today
+TODAY <- lubridate::ymd(Sys.Date())
+
+```
+
+```{r, results='hide'}
+
+### LOAD DATA
+
+# find RDS files in the crypt
+data_paths <- util.find_crypt_paths(list(output_data_path = "EP dashboard data 2018-2019/rserve_data/rds"))
+
+# Load data into workspace
+output_data_list <- readRDS(data_paths$output_data_path %+% "/metascript_output_workspace.rds")
+
+# We only need to keep a few things from the output data
+keep <- c("data_cat_not_imputed",
+          "data_cat_imputed",
+          "class_tbl",
+          "items",
+          "team_tbl",
+          "triton_tbl",
+          "user_tbl")
+output_data_list_keep <- output_data_list[keep]
+list2env(output_data_list_keep, globalenv())
+rm(output_data_list, output_data_list_keep)
+
+# we will work with data_cat_not_imputed a lot - rename it for convenience
+d <- data_cat_not_imputed
+di <- data_cat_imputed
+
+
+# Also load 4th/5th grade teachers to cut
+elementary_teachers_path <- util.find_crypt_paths(list(a =
+                                                         "EP dashboard data 2018-2019/elementary_teachers.csv"))
+elem_teachers <- read.csv(elementary_teachers_path$a)
+
+# Also load test teams
+test_path <- util.find_crypt_paths(list(a =
+                                          "EP dashboard data 2018-2019/test_teams.csv"))
+test_teams <- read.csv(test_path$a)$team_name
+
+# add captain info to team table
+team_tbl <- merge(team_tbl,
+                  user_tbl[, c("user_id", "name", "email")],
+                  by.x = "captain_id",
+                  by.y = "user_id",
+                  all.x = TRUE,
+                  all.y = FALSE) %>%
+  rename(captain_name = name,
+         captain_email = email)
+
+```
+
+```{r}
+
+# Quick tests for EP analysis purposes...
+
+# How much is fidelity (TUQ) correlated with LCs?
+# just looking at first survey ordinal for each student.
+# d$mw <- rowMeans(d[, c("mw1_2", "mw2_2", "mw3_2")], na.rm = TRUE)
+# d$fg <- rowMeans(d[, c("fg1_2", "fg2_2", "fg3_2")], na.rm = TRUE)
+# d$tc <- rowMeans(d[, c("tc1_2", "tc2_2", "tc4_2")], na.rm = TRUE)
+# df <- d %>%
+#   arrange(class_id, userID, cycle_name) %>%
+#   group_by(class_id, userID) %>%
+#   filter(cycle_name %in% first(cycle_name))
+# correlation_vars <- c("teacher_use_qs", "fg", "mw", "tc")
+# library(corrplot)
+# cor( df[, correlation_vars], use="pairwise" ) %>% 
+#     corrplot( type="lower", method = "number", tl.col = "black")
+# # around .4 or .5. So, highly.
+
+
+# How many responses are only with a subset of the LCs?
+# Only using first-survey, assuming that teachers don't change which LCs they ask about.
+# util.apply_columns(df[, c("fg", "mw", "tc")],
+#                    function(vec) sum(!is.na(vec)))
+# # So TC has about 200 or 250 more data points than the other two LCs, likely because of Relay.
+# # If we remove the Relay teams, does that address the issue?
+# relay_teams <- c("Team_ZdcgK8pwQLvzk3Rd", "Team_jh9pzDImgpwFMqIB", "Team_0DOkbNsIP5yGRWYD")
+# df_no_r <- filter(df, !team_id %in% relay_teams)
+# util.apply_columns(df_no_r[, c("fg", "mw", "tc")],
+#                    function(vec) sum(!is.na(vec)))
+# # No!
+# # The following team ONLY surveyed TC:
+# only_tc_teams <- c("Team_BcnEfhOvf1kLZ490")
+# df_only_full_lc_teams <- filter(df, !team_id %in% only_tc_teams)
+# util.apply_columns(df_only_full_lc_teams[, c("fg", "mw", "tc")],
+#                    function(vec) sum(!is.na(vec)))
+# # Removing this them halves the issue.
+# # This is Esperanza - deeply weird team that is one teacher only surveying TC eight times!
+
+
+```
+
+```{r, results='hide'}
+
+#### Connect to SQL database to get more information
+
+# sourcing
+sql <- modules::use('~/Sites/analysis/common/sql.R')
+orig_wd <- getwd()
+setwd("~/.ssl")
+key_str <- readLines(file("triton analysis replica client-key.pem")) %>%
+  paste0(collapse="\n")
+cert_str <- readLines(file("triton analysis replica client-cert.pem")) %>%
+  paste0(collapse="\n")
+ca_str <- readLines(file("triton analysis replica server-ca.pem")) %>%
+  paste0(collapse="\n")
+
+# set the parameters for the SQL connection
+dbname <- "triton"
+server_ip <- ""
+ssl_credentials <- list(
+  key =   key_str,
+  cert =  cert_str,
+  ca =    ca_str
+)
+
+# connect
+conn <- sql$connect(server_ip = server_ip,
+                dbname = dbname,
+                ssl_file_names = list(),
+                ssl_credentials = ssl_credentials,
+                mysql_user = "readonly")
+# get data
+cycle_tbl <- sql$get_table(conn, "cycle")
+org_tbl <- sql$get_table(conn, "organization")
+pj_tbl <- sql$get_table(conn, "response")
+# disconnect
+sql$disconnect_all()
+setwd(orig_wd)
+
+# set working directory to the location of the crypt
+crypt_path <- util.find_crypt_paths(list(output_data_path = "EP dashboard data 2018-2019"))
+setwd(crypt_path$output_data_path)
+
+```
+
+
+```{r, results='hide'}
+
+###### Misc data cleaning
+
+# note last 42 days
+FORTYTWO_DAYS_AGO <- TODAY - days(42)
+d$last_42_days <- d$week_start > FORTYTWO_DAYS_AGO
+
+
+# extract title-1 status for teams, disseminate that to students
+title_1_match_string <- "\"title_one_schools\": \"yes\""
+team_tbl$title_1 <- grepl(title_1_match_string, team_tbl$task_data)
+d <- merge(d,
+           team_tbl[, c("team_id", "title_1")],
+           by = "team_id",
+           all.x = TRUE,
+           all.y = FALSE)
+di <- merge(di,
+           team_tbl[, c("team_id", "title_1")],
+           by = "team_id",
+           all.x = TRUE,
+           all.y = FALSE)
+
+
+# Define "marginalized" student status:
+# "Blk, Lat, & Nat", ELL, or title-1
+d$marginalized <- d$race_cat %in% c("Blk, Lat, & Nat", "Struct. Disadv.") |
+  d$ELL_status %in% "Eng. Learner" |
+  d$title_1 %in% TRUE
+
+# get cycle names:
+# create zero-padded ordinal on single-digit ordinals for proper sorting (e.g. replace "1" with "01")
+# This ensures that "10" doesn't come right after "1" alphabetically!
+# Note: this breaks if anyone reaches 100 cycles.
+cycle_tbl$ordinal_padded <- ifelse(nchar(cycle_tbl$ordinal) %in% 1,
+                                   paste0("0", cycle_tbl$ordinal),
+                                   as.character(cycle_tbl$ordinal))
+
+# Create alphabetically-ordered cycle names based on start dates.
+cycle_tbl$start_month_abb <- month.abb[lubridate::month(cycle_tbl$start_date)]
+cycle_tbl$start_day <- lubridate::day(cycle_tbl$start_date) %>% as.character()
+cycle_tbl <- cycle_tbl %>%
+  group_by(team_id) %>%
+  mutate(cycle_name = "Cycle " %+%
+           ordinal_padded %+%
+           " (" %+%
+           start_month_abb %+%
+           ". " %+%
+           start_day %+%
+           ")") %>%
+  rename(cycle_id = uid)
+# handle cycles with no name bc no start date
+cycle_tbl$cycle_name <- ifelse(is.na(cycle_tbl$start_date), NA, cycle_tbl$cycle_name)
+
+```
+
+```{r, results='hide'}
+
+###### Basic cleaning and verifying
+
+# cut the testing data!
+d <- filter(d, testing %in% "", !team_name %in% test_teams)
+di <- filter(di, testing %in% c("", NA), !team_name %in% test_teams)
+team_tbl <- filter(team_tbl, !team_name %in% test_teams)
+
+# cut the elementary school teacher data
+d <- d[!d$teacher_email %in% elem_teachers$teacher_email, ]
+di <- di[!di$teacher_email %in% elem_teachers$teacher_email, ]
+
+# cut the teams and classes with less than 10 students
+tiny_teams <- d %>%
+  group_by(team_id) %>%
+  summarise(num_unique_students = length(unique(userID))) %>%
+  filter(num_unique_students < 10) %>%
+  select(team_id) %>%
+  unlist()
+tiny_classes <- d %>%
+  group_by(class_id) %>%
+  summarise(num_unique_students = length(unique(userID))) %>%
+  filter(num_unique_students < 10) %>%
+  select(class_id) %>%
+  unlist()
+d <- d[(!d$team_id %in% tiny_teams) | (!d$class_id %in% tiny_classes), ]
+di <- di[(!di$team_id %in% tiny_teams) | (!di$class_id %in% tiny_classes), ]
+
+
+# note the classes that NEVER surveyed at least 80% of their expected students in a cycle
+cycle_participation_rates <- d %>%
+  group_by(class_id, cycle_name) %>%
+  summarise(part_rate = length(unique(userID)) / first(expected_n),
+            expected_n = first(expected_n))
+high_participation_classes <- cycle_participation_rates %>%
+  arrange(class_id, desc(part_rate)) %>%
+  group_by(class_id) %>%
+  filter(part_rate %in% max(part_rate)) %>%
+  filter(part_rate >= .8) %>%
+  select(class_id) %>%
+  unlist() %>%
+  unique()
+pct_high_participation_classes <- (length(high_participation_classes) /
+                              length(unique(d$class_id))) %>%
+  round(2) %>%
+  "*"(100)
+# should I also cut them? I don't think so.
+# d <- d[d$class_id %in% high_participation_classes, ]
+# di <- di[di$class_id %in% high_participation_classes, ]
+  
+
+
+# does every response have...
+## ...a class ID?
+table(is.na(d$class_id))   #  Yes.
+## ...a team ID?
+table(is.na(d$team_id))   #  Yes.
+## ...a week-start?
+table(is.na(d$week_start))   #  Yes.
+## ...an anon userID?
+table(is.na(d$userID))   #  Yes.
+## ...a raw userID?
+table(is.na(d$raw_id))   #  Yes.
+
+# Is there ever a repeated raw ID in the same class-week? should not be possible bc of roster.
+unique_raw_id_class_week <- d %>%
+  group_by(raw_id, class_id, week_start) %>%
+  summarise(n = n())
+table(unique_raw_id_class_week$n) # never repeated. good.
+rm(unique_raw_id_class_week)
+
+
+# There should be one anon ID for every universal ID (raw ID + team).
+multiple_anon_ids <- d %>%
+  group_by(universal_id) %>%
+  summarise(num_unique_anon_ids = length(unique(userID)),
+            anon_ids = paste(unique(userID), collapse = "__")) %>%
+  filter(num_unique_anon_ids > 1) # none - good!
+rm(multiple_anon_ids)
+
+```
+
+```{r, results='hide'}
+
+##### Overall Participation
+
+# How many classes and teachers have surveyed at least 80% of their expected students at least once?
+class_expected_numbers <- d %>%
+  group_by(class_id) %>%
+  summarise(n_unique_students = length(unique(raw_id)),
+            teacher_id = first(teacher_id)) %>%
+  merge(.,
+         class_tbl[, c("class_id", "num_students", "created")],
+         by = "class_id",
+         all.x = TRUE,
+         all.y = FALSE) %>%
+  rename(expected_n = num_students) %>%
+  mutate(obs_ratio = n_unique_students / expected_n,
+         at_least_80_pct_obs = obs_ratio >= .8,
+         over_100_pct_obs = obs_ratio > 1)
+
+class_expected_numbers_count <- class_expected_numbers %>%
+  group_by(at_least_80_pct_obs) %>%
+  summarise(n_classes = n(),
+            n_unique_teachers = length(unique(teacher_id))) %>%
+  as.data.frame()
+
+
+# But over half of classes have >100% representation! How is that possible given rosters?
+# Maybe because they were started before the roster implementation date of 9/24?
+high_representation_table <- class_expected_numbers %>%
+  mutate(created_cleaned = ymd_hms(created),
+         created_before_9_24 = created_cleaned < ymd("2018-09-24")) %>%
+  select(over_100_pct_obs, created_before_9_24) %>%
+  table()
+# Yes! 100% of oversubscribed classes were created before 9/24. Nothing is wrong with our system here.
+
+# Related: there are some clearly incorrect student IDs in responses, like "catproud".
+# They are classroom codes mistakely written as student IDs. How did these get through the roster system?
+# Were they all grandfathered in before the roster implementation date of 9/24?
+d$code_no_spaces <- gsub(" ", "", d$code)
+d$code_matches_raw_id <- d$code_no_spaces == d$raw_id  # 41 matches
+bad_codes <- d[d$code_matches_raw_id, c("raw_id", "week_start")] %>%
+  arrange(raw_id, week_start)
+# Yes! All started before 9/24. Nothing is wrong with our system here.
+
+
+# How many students ever show up in the data at all?
+num_students_in_data <- length(unique(d$universal_id))
+# And how many students show up in classes that "started" (>80% surveyed in the class)?
+classes_that_started <- class_expected_numbers[class_expected_numbers$at_least_80_pct_obs %in% TRUE,
+                                               "class_id"]
+num_students_in_started_classes <- length(unique(d[d$class_id %in% classes_that_started, "universal_id"]))
+
+```
+
+```{r, results='hide'}
+
+##### Cycle Persistence
+
+### % of rostered students surveyed per cycle
+# For each class/cycle, get num unique students / expected-n for that class,
+# then average across all of them
+class_cycle_survey_props <- d %>%
+  group_by(class_id, cycle_name) %>%
+  summarise(prop_surveyed = (length(unique(userID)) / first(expected_n)))
+
+avg_prop_surveyed_per_cycle <- class_cycle_survey_props %>%
+  ungroup() %>%
+  summarise(mean_prop_surveyed = mean(prop_surveyed, na.rm = TRUE)) %>%
+  as.numeric() %>%
+  round(2) %>%
+  "*"(100)
+
+## Check the meaning of expected-n! Maybe some before we introduced rosters. Should never be >100%.
+overattended_class_cycles <- class_cycle_survey_props %>%
+  group_by(prop_surveyed > 1) %>%
+  summarise(unique_cycle_names = paste0(unique(cycle_name), collapse = " / "))
+# All instances of >100% particiation are from cycles starting Sep. 3 or earlier.
+
+### % of participating teachers who do 3+ survey cycles?
+# NOTE: this is a meaningless metric because it's not a sign of low persistence 
+# if a team just started late and didn't have time for multiple cycles.
+d %>%
+  group_by(team_id) %>%
+  summarise(num_unique_cycles = length(unique(cycle_name)))
+
+
+# Feeling out the data - how long are cycles? Mean of ~18 days, median/mode of ~11 days (two weeks)
+mean(ymd(cycle_tbl$end_date) - ymd(cycle_tbl$start_date), na.rm = TRUE)
+# Consider 1 month as a reasonable conservatively long cycle length.
+# This UNDERestimates the number of cycles that teams could actually squeeze in.
+
+# get survey durations at different grouping levels
+class_survey_durations <- d %>%
+  arrange(class_id, StartDate) %>%
+  group_by(class_id) %>%
+  summarise(teacher_id = first(teacher_id),
+            time_surveying = ymd(TODAY) - as_date(ymd_hms(first(StartDate))),
+            num_cycles = length(unique(cycle_name)),
+            num_unique_students = length(unique(userID)))
+teacher_survey_durations <- class_survey_durations %>%
+  group_by(teacher_id) %>%
+  summarise(time_surveying = max(time_surveying),
+            num_cycles = max(num_cycles))
+
+
+
+# For teachers who have been surveying at least 90 days, what proportion have done at least two cycles?
+pct_teacher_two_cycle <- teacher_survey_durations %>%
+  filter(time_surveying >= 90) %>%
+  summarise(pct_two_month_two_cycle = sum(num_cycles >= 2, na.rm = T) / length(num_cycles)) %>%
+  as.numeric() %>%
+  round(2) %>%
+  "*"(100)
+# For teachers who have been surveying at least 135 days, what proportion have done at least three cycles?
+pct_teacher_three_cycle <- teacher_survey_durations %>%
+  filter(time_surveying >= 135) %>%
+  summarise(pct_three_month_three_cycle = sum(num_cycles >= 3, na.rm = T) / length(num_cycles)) %>%
+  as.numeric() %>%
+  round(2) %>%
+  "*"(100)
+
+
+```
+
+```{r, results='hide'}
+
+##### Demographics
+
+# assemble a table at the student level w gender, race_cat, race6, ELL-status, marginalized-status,
+# along with other student-level useful info
+student_demogs <- d %>%
+  group_by(userID) %>%
+  summarise(gender = first(gender),
+            race_cat = first(race_cat),
+            race6 = first(race6),
+            ELL_status = first(ELL_status),
+            marginalized = first(marginalized))
+
+# get pct of marginalized students for an OKR
+marg_pcts <- student_demogs %>%
+  group_by(marginalized) %>%
+  summarise(n = n()) %>%
+  mutate(pct = round(n * 100 / sum(n), 0)) %>%
+  as.data.frame()
+
+```
+
+```{r, results='hide'}
+
+##### Fidelity
+
+# Get each student's most recent individual fidelity scores for each class (student-class level)
+student_class_fidelities <- d %>%
+  arrange(userID, class_id, cycle_name) %>%
+  group_by(userID, class_id) %>%
+  summarise(team_name = first(team_name),
+            class_name = first(class_name),
+            teacher_email = first(teacher_email),
+            most_recent_tuq = last(na.omit(teacher_use_qs)),
+            most_recent_tuq_good = most_recent_tuq >=4,
+            most_recent_honesty = last(na.omit(honest_comfort)),
+            most_recent_honesty_good = most_recent_honesty == 2,
+            high_fidelity = most_recent_tuq_good & most_recent_honesty_good) %>%
+  ungroup()
+
+# aggregate to class-level fidelity info
+class_fidelities <- student_class_fidelities %>%
+  group_by(class_id) %>%
+  summarise(team_name = first(team_name),
+            class_name = first(class_name),
+            teacher_email = first(teacher_email),
+            class_tuq = mean(most_recent_tuq_good, na.rm = T),
+            class_honesty = mean(most_recent_honesty_good, na.rm = T),
+            high_fidelity_class = (class_tuq >= .8) & (class_honesty >= .8))
+
+# save off a vector of high-fidelity classes
+high_fidelity_classes <- class_fidelities[class_fidelities$high_fidelity_class, "class_id"] %>%
+  unlist()
+
+# Get a fidelity summary
+fidelity_summary <- ds.summarize_by_column(class_fidelities[, c("class_tuq", "class_honesty")],
+                       func_list = c(ds.helper$default_col_funcs, 
+                                     "pct_over_80" = pct_over_80))
+
+# Do the same for just recent classes
+active_classes <- d %>%
+  filter(d$last_42_days) %>%
+  select(class_id) %>%
+  unique() %>%
+  unlist()
+recent_fidelity_summary <- ds.summarize_by_column(class_fidelities[class_fidelities$class_id %in% active_classes,
+                                                                 c("class_tuq", "class_honesty")],
+                                      func_list = c(ds.helper$default_col_funcs, 
+                                     "pct_over_80" = pct_over_80))
+
+
+# Get info on negative outlier classes
+class_fidelities_tuq_IQR <- IQR(class_fidelities$class_tuq, na.rm = TRUE)
+class_fidelities_tuq_first_quartile <- quantile(class_fidelities$class_tuq, .25, na.rm = TRUE)
+class_fidelities_honesty_IQR <- IQR(class_fidelities$class_honesty, na.rm = TRUE)
+class_fidelities_honesty_first_quartile <- quantile(class_fidelities$class_honesty, .25, na.rm = TRUE)
+class_fidelities$is_neg_tuq_outlier <- class_fidelities$class_tuq < 
+  (class_fidelities_tuq_first_quartile - 1.5 * class_fidelities_tuq_IQR)
+class_fidelities$is_neg_honesty_outlier <- class_fidelities$class_honesty < 
+  (class_fidelities_honesty_first_quartile - 1.5 * class_fidelities_honesty_IQR)
+
+
+```
+
+```{r}
+
+### Improvement - pct-good (using imputed data because you're taking class averages)
+
+# Melt metrics (moving to team-class-user-cycle)
+di_melt <- di %>%
+  melt(id.vars = c("team_id", "class_id", "userID", "cycle_name"),
+       measure.vars = c("mw1_2", "mw2_2", "mw3_2",
+                       "fg1_2", "fg2_2", "fg3_2",
+                       "tc1_2", "tc2_2", "tc4_2")) %>%
+  rename(metric = variable)
+
+# summarise across users to team-class-cycle-metric, calculating pct-good
+di_melt_class_cycle <- di_melt %>%
+  group_by(team_id, class_id, cycle_name, metric) %>%
+  summarise(pct_good = ( round(sum(value >= 6, na.rm = TRUE) / length(value), 2) ),
+            num_students = length(unique(userID)))
+
+# remove data from classes that only surveyed in one cycle
+di_melt_class_cycle <- di_melt_class_cycle %>%
+  group_by(class_id) %>%
+  filter(length(unique(cycle_name)) > 1)
+
+# remove rows that have fewer than 10 students - 
+# we can't base improvement claims on such small samples!
+di_melt_class_cycle <- filter(di_melt_class_cycle,
+                        num_students >= 10)
+
+# remove class time-points that aren't first or last, and tag remainders with a "time" colum
+di_melt_class_cycle <- di_melt_class_cycle %>%
+  arrange(team_id, class_id, cycle_name, metric) %>%
+  group_by(team_id, class_id) %>%
+  mutate(time = ifelse(cycle_name %in% first(cycle_name),
+                       "First",
+                       ifelse(cycle_name %in% last(cycle_name),
+                              "Last",
+                              "Middle"))) %>%
+  filter(!time %in% "Middle")
+
+# tag rows with high-fidelity-class status
+di_melt_class_cycle <- merge(di_melt_class_cycle,
+                class_fidelities[, c("class_id", "high_fidelity_class")],
+                by = "class_id",
+                all.x = TRUE,
+                all.y = FALSE)
+
+# tag rows with LC
+di_melt_class_cycle <- mutate(di_melt_class_cycle,
+                              lc = ifelse(grepl("^fg", metric), "Feedback for Growth",
+                                    ifelse(grepl("^mw", metric), "Meaningful Work",
+                                      ifelse(grepl("^tc", metric), "Teacher Caring", NA))))
+
+# Calculate diff scores for each class-metric from first to last cycle
+di_melt_class_diffs <- di_melt_class_cycle %>%
+  arrange(team_id, class_id, metric, cycle_name) %>%
+  group_by(team_id, class_id, metric) %>%
+  summarise(pct_good_diff = last(pct_good) - first(pct_good),
+            lc = first(lc),
+            high_fidelity_class = first(high_fidelity_class))
+
+# Aggregate to LCs
+di_melt_class_diffs_lcs <- di_melt_class_diffs %>%
+  group_by(team_id, class_id, lc) %>%
+  summarise(pct_change = round(100*mean(pct_good_diff, na.rm = TRUE), 0),
+            high_fidelity_class = first(high_fidelity_class))
+
+# Merge information in:
+# merge in teacher and class info
+di_melt_class_diffs_lcs <- merge(di_melt_class_diffs_lcs,
+                       class_tbl[, c("class_name", "class_id", "contact_id", "num_students")],
+                       by = "class_id",
+                       all.x = TRUE,
+                       all.y = FALSE) %>%
+  rename(teacher_id = contact_id)
+di_melt_class_diffs_lcs <- merge(di_melt_class_diffs_lcs,
+                       user_tbl[, c("user_id", "name", "email")],
+                       by.x = "teacher_id",
+                       by.y = "user_id",
+                       all.x = TRUE,
+                       all.y = FALSE) %>%
+  rename(teacher_name = name, teacher_email = email)
+# merge in team name
+di_melt_class_diffs_lcs <- merge(di_melt_class_diffs_lcs,
+                       team_tbl[, c("team_id", "team_name")],
+                       by = "team_id",
+                       all.x = TRUE,
+                       all.y = FALSE)
+# merge in date of last survey
+last_survey_of_teacher <- d %>%
+  filter(!is.na(StartDate_formatted)) %>%
+  arrange(teacher_id, StartDate_formatted) %>%
+  group_by(teacher_id) %>%
+  summarise(most_recent_survey_date = last(StartDate_formatted))
+di_melt_class_diffs_lcs <- merge(di_melt_class_diffs_lcs,
+                       last_survey_of_teacher,
+                       by = "teacher_id",
+                       all.x = TRUE,
+                       all.y = FALSE)
+
+# clean and sort, and save bright spot info
+bright_spot_info <- di_melt_class_diffs_lcs %>%
+  select(pct_change,
+         lc,
+         class_name,
+         class_id,
+         team_name,
+         team_id,
+         teacher_name,
+         teacher_email,
+         most_recent_survey_date) %>%
+  arrange(desc(pct_change)) %>%
+  mutate(pct_change_numeric = pct_change,
+         pct_change = pct_change %+% "%")
+save_path <- util.find_crypt_paths(list(save_path = "EP dashboard data 2018-2019"))
+write.csv(bright_spot_info, save_path %+% "/All classes pct change (for bright spots).csv")
+
+# get unique entries (one per teacher) for following up
+# bright_spot_info_unique <- bright_spot_info %>%
+#   group_by(teacher_name) %>%
+#   mutate(within_teacher_ordinal = 1:n()) %>%
+#   filter(within_teacher_ordinal == 1)
+# write.csv(bright_spot_info_unique, save_path %+% "/Unique teacher bright spots.csv")
+
+
+# get BEST improvements for each teacher
+# bright_spot_info_unique <- bright_spot_info %>%
+#   arrange(teacher_name, desc(pct_change_numeric)) %>%
+#   group_by(teacher_name) %>%
+#   mutate(within_teacher_ordinal = 1:n()) %>%
+#   filter(within_teacher_ordinal == 1)
+# write.csv(bright_spot_info_unique, save_path %+% "/Unique teacher BEST bright spots.csv")
+
+```
+
+```{r}
+
+# Improvement across marg vs. non-marg groups.
+# Strategy: For all students in [group], average to LC at each time point,
+# then simplify that to "good" or not,
+# then get the net % of students who moved from bad to good (minus the opposite).
+# Average that across LCs.
+# Compare for [group] of marg vs. non-marg in absolute pct point terms.
+
+### Basic deltas:
+# Take unimputed survey data, group_by student-class-metric,
+# get delta, avoid NAs and single measurements
+deltas <- d %>%
+  rowwise() %>%
+  mutate(mw = mean(c(mw1_2, mw2_2, mw3_2), na.rm = T),   # create "scales"
+         fg = mean(c(fg1_2, fg2_2, fg3_2), na.rm = T),
+         tc = mean(c(tc1_2, tc2_2, tc4_2), na.rm = T)) %>%
+  melt(id.vars = c("userID", "class_id", "cycle_name"),
+       measure.vars = c("mw", "fg", "tc")) %>%
+  rename(metric = variable) %>%
+  arrange(userID, class_id, cycle_name, metric) %>%
+  group_by(userID, class_id, metric) %>%
+  summarise(
+            first_value = first(na.omit(value)),
+            last_value = last(na.omit(value)),
+            delta_value = last_value - first_value,
+            n_value = length(na.omit(value)),
+            first_value_good = first_value >= 6,
+            last_value_good = last_value >= 6,
+            delta_good = last_value_good - first_value_good)
+
+# drop out any apparent "deltas" that only come from a single measurement
+deltas <- filter(deltas, n_value > 1)
+
+# Add in student-level demographic info and class-level fidelity info
+deltas <- merge(deltas,
+                student_demogs,
+                by = "userID",
+                all.x = TRUE,
+                all.y = FALSE)
+deltas <- merge(deltas,
+                class_fidelities[, c("class_id", "high_fidelity_class")],
+                by = "class_id",
+                all.x = TRUE,
+                all.y = FALSE)
+
+# Group by demographic category and get net pct change in delta-good
+delta_good_diffs <- deltas %>%
+  group_by(marginalized, metric) %>%
+  summarise(net_delta_good = sum(delta_good)/length(delta_good)) %>%
+  summarise(net_delta_good = mean(net_delta_good))
+delta_good_marg_diff <- (delta_good_diffs[delta_good_diffs$marginalized, "net_delta_good"] - 
+  delta_good_diffs[!delta_good_diffs$marginalized, "net_delta_good"]) %>%
+  unlist() %>%
+  smart_percent()
+
+# Do the same, subsetting to high-fidelity classes only
+delta_good_diffs_high_fid <- deltas %>%
+  filter(high_fidelity_class) %>%
+  group_by(marginalized, metric) %>%
+  summarise(net_delta_good = sum(delta_good)/length(delta_good)) %>%
+  summarise(net_delta_good = mean(net_delta_good))
+delta_good_marg_diff_high_fid <- (delta_good_diffs_high_fid[delta_good_diffs_high_fid$marginalized,
+                                                            "net_delta_good"] - 
+  delta_good_diffs_high_fid[!delta_good_diffs_high_fid$marginalized, "net_delta_good"]) %>%
+  unlist() %>%
+  smart_percent()
+
+
+```
+
+```{r}
+
+### Improvement summary tables for OKRs
+
+# % of classes that improved at least one LC
+class_improvements <- di_melt_class_diffs_lcs %>%
+  group_by(class_id) %>%
+  summarise(improved_at_least_one_lc = any(pct_change > 0),
+            improved_all_lcs_on_avg = mean(pct_change) > 0,
+            num_students = first(num_students))
+summary_least_one_lc <- class_improvements %>%
+  group_by(improved_at_least_one_lc) %>%
+  summarise(num_classes = length(class_id),
+            num_students = sum(num_students)) %>%
+  mutate(pct_classes = smart_percent(num_classes/sum(num_classes)))
+one_lc_improve_okr <- summary_least_one_lc[summary_least_one_lc$improved_at_least_one_lc,
+                       "pct_classes"] %>% unlist()
+one_lc_improve_students_okr <- summary_least_one_lc[summary_least_one_lc$improved_at_least_one_lc,
+                                                    "num_students"] %>% unlist()
+
+# % of classes that improved all LCs on avg
+summary_all_lcs <- class_improvements %>%
+  group_by(improved_all_lcs_on_avg) %>%
+  summarise(num_classes = length(class_id),
+            num_students = sum(num_students)) %>%
+  mutate(pct_classes = smart_percent(num_classes/sum(num_classes)))
+all_lcs_improve_okr <- summary_all_lcs[summary_all_lcs$improved_all_lcs_on_avg,
+                       "pct_classes"] %>% unlist()
+  
+# % of classes that improved all LCs on avg (high fidelity only)
+high_fidelity_class_improvements <- di_melt_class_diffs_lcs %>%
+  filter(high_fidelity_class %in% TRUE) %>%
+  group_by(class_id) %>%
+  summarise(improved_all_lcs_on_avg = mean(pct_change) > 0,
+            num_students = first(num_students))
+summary_high_fid_all_lcs <- high_fidelity_class_improvements %>%
+  group_by(improved_all_lcs_on_avg) %>%
+  summarise(num_classes = length(class_id),
+            num_students = sum(num_students)) %>%
+  mutate(pct_classes = smart_percent(num_classes/sum(num_classes)))
+high_fid_all_lcs_improve_okr <- summary_high_fid_all_lcs[summary_high_fid_all_lcs$improved_all_lcs_on_avg,
+                       "pct_classes"] %>% unlist()
+
+
+
+```
+
+```{r, results='hide'}
+
+##### Practice-Journal completion
+
+# NOTE: This doesn't take cycles into account, but for now the data are super thin so it doesn't matter.
+
+# Hacky way of identifying table entries that are PJ entries.
+actual_pj_tbl <- pj_tbl %>%
+  filter(str_detect(parent_id, "Cycle_"),
+         module_label %in% c("EPPracticeJournal", ""))
+
+# Get unique IDs of teachers who did at least one PJ
+unique_pj_teachers <- unique(actual_pj_tbl$user_id)
+# But there are some test teachers, so only keep ones who actually have any survey data
+unique_surveyed_teachers <- na.omit(unique(d$teacher_id))
+unique_pj_teachers <- unique_pj_teachers[unique_pj_teachers %in% unique_surveyed_teachers]
+pct_teachers_did_pj <- ((length(unique_pj_teachers) / length(unique_surveyed_teachers)) * 100) %>%
+  round()
+
+
+```
+
+```{r, results='hide'}
+
+# Done with setup!
+# 
+
+
+```
+
+![Outline of Class Participation](class progress diagram copy.png)
+
+```{r}
+
+# Temp placeholder!
+pct_teachers_did_pj <- ifelse(exists("pct_teachers_did_pj"),
+                              pct_teachers_did_pj,
+                              NA)
+
+# create data frame
+summary_data <- tribble(
+  ~`Goal type`, ~`Metric`, ~`Goal`, ~`Current Status`,
+  #-----------|--------|-----------------
+  "Context", "\\% of valid classes that started", "50\\%", pct_high_participation_classes %+% "%",
+  "Context", "\\# of valid classes that started", "250 classes", class_expected_numbers_count[class_expected_numbers_count$at_least_80_pct_obs, "n_classes"] %+% " classes",
+  "OKR", "\\# of teachers leading classes that started", "250 teachers", class_expected_numbers_count[class_expected_numbers_count$at_least_80_pct_obs, "n_unique_teachers"] %+% " teachers",
+  "OKR", "\\# of students in classes that started", "14000 students", num_students_in_started_classes %+% " students",
+  "OKR", "\\% of students who are members of marginalized groups", "50\\%", marg_pcts[marg_pcts$marginalized, "pct"] %+% "%",
+    "OKR", "\\% of classes with fidelity > 80\\%", "60\\%", (fidelity_summary[fidelity_summary$variable_name %in% "class_tuq", "pct_over_80"] * 100)  %+% "%",
+  "OKR", "\\% of teachers who do a Practice Journal in their first cycle", "80\\%", pct_teachers_did_pj  %+% "%",
+  "OKR", "Average \\% of rostered students surveyed per cycle", "80\\%", avg_prop_surveyed_per_cycle %+% "%",
+  "OKR", "\\% of teachers who do 2+ survey cycles in 90 days", "80\\%", pct_teacher_two_cycle %+% "%",
+  "OKR", "\\% of teachers who do 3+ survey cycles in 135 days", "75\\%", pct_teacher_three_cycle %+% "%",
+  "OKR", "\\% of classes that improved at least one LC", "55\\%", one_lc_improve_okr,
+"OKR", "\\# of students in classes with at least one improved LC", "7700 students", 
+one_lc_improve_students_okr %+% " students",
+  "OKR", "\\% of classes that improved all LCs on avg.", "55\\%", all_lcs_improve_okr,
+  "OKR", "\\% of classes that improved all LCs on avg. (high-fidelity only)", "60\\%", high_fid_all_lcs_improve_okr,
+  "OKR", "Avg. extra net \\%-pt LC improvement for marg. students", "1\\%", delta_good_marg_diff,
+  "General", "Avg. extra net \\%-pt LC improvement for marg. students (high-fidelity only)", "1\\%", delta_good_marg_diff_high_fid)
+
+
+
+
+# apply cell specs
+current_status_numbers_only <- extract_number(summary_data[["Current Status"]])
+goal_numbers_only <- extract_number(summary_data$Goal)
+summary_data[["Current Status"]] <- ifelse(is.na(current_status_numbers_only),
+                  cell_spec("Don't know yet", color = "black"),
+                  ifelse(current_status_numbers_only < goal_numbers_only,
+                     cell_spec(summary_data[["Current Status"]], color = "red"),
+                     cell_spec(summary_data[["Current Status"]], color = "green")))
+
+
+kable(summary_data, booktabs = TRUE, escape = FALSE) %>%
+  row_spec(0, bold = TRUE) %>%
+  column_spec(4, bold = TRUE) %>%
+  kable_styling(latex_options = "striped", font_size = 8) %>%
+  group_rows(index = c("Overall Participation and Starting" = 5,
+                       "Fidelity and Compliance (for classes that started)" = 2,
+                       "Persistence (for classes that started)" = 3,
+                       "Improvement (for classes that persisted)" = 6))
+
+
+```
+
+
+```{r}
+
+# Student demographic tables, if desired
+
+# student_demogs %>%
+#   group_by(gender) %>%
+#   summarise(n_students = n()) %>%
+#   rename(Gender = gender,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Gender Identification")
+# 
+# student_demogs %>%
+#   group_by(race_cat) %>%
+#   summarise(n_students = n()) %>%
+#   rename(Race = race_cat,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Race Identification (2 groups)")
+# 
+# student_demogs %>%
+#   group_by(race6) %>%
+#   summarise(n_students = n()) %>%
+#   rename(Race = race6,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Race Identification (6 groups)")
+# 
+# student_demogs %>%
+#   group_by(ELL_status) %>%
+#   summarise(n_students = n()) %>%
+#   rename("ELL Status" = ELL_status,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student ELL Identification")
+# 
+# student_demogs %>%
+#   group_by(marginalized) %>%
+#   summarise(n_students = n()) %>%
+#   rename("Marginalized Status" = marginalized,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Marginalized Status (Black, Latin@, NatAm, ELL, and/or Title I)")
+
+
+# Monthly active students and teachers
+# d %>%
+#   mutate(year_month = substr(StartDate_formatted, 1, nchar(StartDate_formatted)-3)) %>%
+#   arrange(year_month) %>%
+#   group_by(year_month) %>%
+#   summarise(num_students = length(unique(userID)),
+#             num_teachers = length(unique(teacher_id))) %>%
+#   filter(!year_month %in% "2019-03") %>%
+#   summarise(mean_students = mean(num_students),
+#             mean_teachers = mean(num_teachers))
+
+```
+
+
+```{r, warning = FALSE}
+
+# Boxplot of overall fidelities
+
+# melted_fidelities <- melt(class_fidelities[, c("class_tuq", "class_honesty")])
+# melted_fidelities$variable <- as.character(melted_fidelities$variable)
+# melted_fidelities$variable <- util.recode(melted_fidelities$variable,
+#                                           c("class_tuq", "class_honesty"),
+#                                           c("Teacher Will Use Responses",
+#                                             "Student Feels Safe Being Honest"))
+# ggplot(melted_fidelities, aes(variable, value*100)) +
+#   geom_boxplot() +
+#   geom_abline(slope = 0, intercept = .8,
+#               color = "red", linetype = 2) +
+#   xlab("Fidelity Variable") +
+#   ylab("% of students who agree") +
+#   scale_y_continuous(breaks = seq(0, 100, 10)) +
+#   ggtitle("Distributions of Most Recent Class Fidelity Scores")
+# 
+# 
+# # Is student fidelity changing over time - in general and across teams?
+# 
+# # create melted data
+# student_fidelity_change <- d %>%
+#   arrange(userID, week_start) %>%
+#   group_by(userID) %>%
+#   summarise(team_id = first(team_id),
+#             first_tuq = first(na.omit(teacher_use_qs)),
+#             last_tuq = last(na.omit(teacher_use_qs)),
+#             n_tuq = length(teacher_use_qs),
+#             first_honesty = first(na.omit(honest_comfort)),
+#             last_honesty = last(na.omit(honest_comfort)),
+#             n_honesty = length(honest_comfort)) %>%
+#   filter((n_tuq > 1) & n_honesty > 1) %>% # remove students with only one measurement
+#   mutate(n_tuq = NULL, n_honesty = NULL) %>%
+#   melt(id.vars = c("userID", "team_id"))
+# # mutate and cast
+# student_fidelity_change$fidelity_var <- ifelse(grepl("tuq", student_fidelity_change$variable),
+#                                                "tuq", "honesty")
+# student_fidelity_change$position <- ifelse(grepl("first", student_fidelity_change$variable),
+#                                                "first", "last")
+# student_fidelity_change_summary <- student_fidelity_change %>%
+#   group_by(team_id, fidelity_var, position) %>%
+#   summarise(mean_value = mean(value))
+# 
+# # plot - fidelity scores are not going down.
+# ggplot(student_fidelity_change[student_fidelity_change$fidelity_var %in% "tuq", ],
+#        aes(position, value, group = team_id, color = team_id)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1,
+#                                 fun.args=list(conf.int=.95)) +
+#   ylim(1, 5) +
+#   ggtitle("Average change in student TUQ scores from first to last measure")
+# ggplot(student_fidelity_change[student_fidelity_change$fidelity_var %in% "honesty", ],
+#        aes(position, value-1, group = team_id, color = team_id)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1,
+#                                 fun.args=list(conf.int=.95)) +
+#   ylim(0,1) +
+#   ggtitle("Average change in student honesty scores from first to last measure")
+# 
+# 
+# # These tables display specific negative outlier classes! Sensitive data!
+# write.csv(class_fidelities[class_fidelities$is_neg_tuq_outlier %in% TRUE,
+#                          c("class_name", "teacher_email", "team_name", "class_tuq")],
+#           file = "low_tuq_classes.csv")
+# write.csv(class_fidelities[class_fidelities$is_neg_honesty_outlier %in% TRUE,
+#                          c("class_name", "team_name", "class_honesty")],
+#           file = "low_honesty_classes.csv")
+
+```
+
+# Improvement
+
+```{r, warning = FALSE, fig.width = 12, fig.height = 6}
+
+
+# Makin some graphs:
+
+## Melt and restructure data using deltas
+# melt again to melt out position (first/last)
+dm <- melt(deltas,
+           id.vars = setdiff(names(deltas), c("first_value", "last_value")),
+           measure.vars = c("first_value", "last_value")) %>%
+  rename(position = variable,
+         in_marginalized_group = marginalized)
+
+# clean up
+dm$position <- util.recode(as.character(dm$position),
+                           c("first_value", "last_value"),
+                           c("First", "Last"))
+dm$variable <- util.recode(as.character(dm$metric),
+                           c("fg", "mw", "tc"),
+                           c("Feedback for Growth", "Meaningful Work", "Teacher Caring"))
+dm$implementation_fidelity <- ifelse(dm$high_fidelity_class,
+                                     "High", "Low")
+
+# Graph: changes in individual student learning-condition scores across classroom implementation fidelity
+ggplot(dm, aes(position, value, 
+               group = implementation_fidelity,
+               color = implementation_fidelity)) +
+  geom_line(stat = "summary", fun.y = "mean", size = 1) +
+  ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+                                geom="errorbar", width=.1, 
+                                fun.args=list(conf.int=.95)) +
+  facet_grid(. ~ variable) +
+  scale_y_continuous(breaks=seq(1, 7, .5)) +
+  scale_color_brewer(palette = "Set1") +
+  xlab("Time of Measurement") +
+  ylab("Average response to learning-condition questions (1-7)") +
+  labs(color = "Classroom Implementation Fidelity")  +
+  ggtitle("Changes in individual student learning-condition scores across classroom implementation fidelity")
+
+
+
+# Unused: graph of raw improvement deltas across fidelity AND marg status
+# ggplot(dm, aes(position, value,
+#                group = interaction(high_fidelity_class, in_marginalized_group),
+#                color = high_fidelity_class,
+#                linetype = in_marginalized_group)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1,
+#                                 fun.args=list(conf.int=.95)) +
+#   facet_grid(. ~ variable) +
+#   scale_y_continuous(breaks=seq(1, 7, .5)) +
+#   scale_color_brewer(palette = "Set1") +
+#   xlab("Time of Measurement") +
+#   ylab("Value") +
+#   ggtitle("Changes in individual student LC ratings, first-last measure, " %+%
+#           "across class fidelity and marginalized status")
+
+```
+
+
+
+```{r, fig.width = 12, fig.height = 6}
+
+# Improvement graphs at the classroom pct-good level
+
+
+# aggregate data to LC level
+di_melt_class_cycle_lc <- di_melt_class_cycle %>%
+  group_by(class_id, time, lc) %>%
+  summarise(pct_good = mean(pct_good),
+            high_fidelity_class = first(high_fidelity_class))
+di_melt_class_cycle_lc$implementation_fidelity <- ifelse(di_melt_class_cycle_lc$high_fidelity_class,
+                                     "High", "Low")
+
+
+ggplot(di_melt_class_cycle_lc,
+       aes(time, pct_good, 
+               group = implementation_fidelity,
+               color = implementation_fidelity)) +
+  geom_line(stat = "summary", fun.y = "mean", size = 1) +
+  ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+                                geom="errorbar", width=.1, 
+                                fun.args=list(conf.int=.95)) +
+  facet_grid(. ~ lc) +
+  scale_color_brewer(palette = "Set1") +
+  scale_y_continuous(labels = scales::percent,
+                     breaks = seq(0, 1, .1)) +
+  xlab("Time of Measurement") +
+  ylab("Percent of Class that Agrees or Strongly Agrees") +
+  labs(color = "Classroom Implementation Fidelity")  +
+  ggtitle("Changes in classroom learning condition percent-good scores \nacross implementation fidelity (imputed data)")
+
+
+```
+
+
+```{r}
+
+###### Participation metrics for Arnrow
+# tt = team table
+
+### Assemble tt and add community info and team member counts
+
+# clean up tt
+tt <- team_tbl %>%
+  select(team_name,
+         team_id,
+         created,
+         organization_ids,
+         captain_id) %>%
+  filter(!team_name %in% test_teams)
+
+
+# break up teams' associated communities - ONLY STORING THE FIRST LISTED COMMUNITY!
+tt$community_id <- tt$organization_ids %>%
+  gsub("\"", "", .) %>%
+  gsub("\\[", "", .) %>%
+  gsub("\\]", "", .) %>%
+  gsub(",.*", "", .) %>%
+  replace(. == "", NA)
+
+# get community name instead of ID
+tt <- merge(tt,
+            org_tbl[, c("uid", "name")],
+            by.x = "community_id",
+            by.y = "uid",
+            all.x = TRUE,
+            all.y = FALSE) %>%
+  rename(community_name = name)
+
+# add community contacts (max of three orgs per contact allowed)
+# separate out associated orgs for each user into multiple columns
+user_tbl$owned_organizations_cleaned <- user_tbl$owned_organizations %>%
+  gsub("\"", "", .) %>%
+  gsub("\\[", "", .) %>%
+  gsub("\\]", "", .)
+user_tbl_orgs_separated <- separate(user_tbl, owned_organizations_cleaned,
+                           c("org_1", "org_2", "org_3"), sep = ", ")
+user_tbl_orgs_separated$org_1 <- ifelse(user_tbl_orgs_separated$org_1 %in% "",
+                                        NA,
+                                        user_tbl_orgs_separated$org_1)
+# melt, then regroup by org
+user_tbl_orgs_separated_melted <- melt(user_tbl_orgs_separated[c("user_id", "org_1", "org_2",
+                                                                 "org_3", "name", "email")],
+                                       id.vars = c("user_id", "name", "email"))
+org_to_contacts <- user_tbl_orgs_separated_melted %>%
+  filter(!is.na(value)) %>%
+  group_by(value) %>%
+  summarise(community_contact_info = paste(name, email, sep = ", ", collapse = "; ")) %>%
+  rename(community_id = value)
+# merge
+tt <- merge(tt,
+            org_to_contacts,
+            by = "community_id",
+            all.x = TRUE,
+            all.y = FALSE)
+
+# Add team captain info (we know it's one captain per team, and max of five teams per captain)
+user_tbl_captains <- user_tbl %>%
+  select(user_id, name, email) %>%
+  rename(captain_id = user_id, captain_name = name, captain_email = email)
+tt <- merge(tt,
+            user_tbl_captains,
+            by = "captain_id",
+            all.x = TRUE,
+            all.y = FALSE)
+
+# Add number of team members - number of user_tbl rows that pattern match in owned_teams
+count_team_matches <- function(team_id, team_assignments) {
+  length(grep(team_id, team_assignments))
+}
+count_team_matches_vectorized <- Vectorize(count_team_matches,
+                                           vectorize.args = "team_id")
+tt$num_team_members <- count_team_matches_vectorized(tt$team_id,
+                            user_tbl$owned_teams)
+
+```
+
+```{r}
+
+### add cycle information:
+# tag cycles as over or not based on date,
+# then summarise to team level
+cycle_tbl_cleaned <- cycle_tbl %>%
+  filter(!is.na(start_date), !is.na(end_date)) %>%
+  mutate(cycle_over = end_date < TODAY,
+         cycle_happening_now = (start_date <= TODAY) & (end_date >= TODAY),
+         cycle_not_started = start_date > TODAY) %>%
+  arrange(team_id, cycle_name)
+# get all past cycles
+cycle_tbl_summarized_past <- cycle_tbl_cleaned %>%
+  filter(cycle_over) %>%
+  group_by(team_id) %>%
+  summarise(cycles_past = paste(cycle_name, collapse = "; "),
+            most_recent_past_cycle = last(cycle_name))
+# get present cycle (should just be one)
+cycle_tbl_summarized_present <- cycle_tbl_cleaned %>%
+  filter(cycle_happening_now) %>%
+  group_by(team_id) %>%
+  summarise(cycle_happening_now = paste(cycle_name, collapse = "; "))
+# get all future cycles
+cycle_tbl_summarized_future <- cycle_tbl_cleaned %>%
+  filter(cycle_not_started) %>%
+  group_by(team_id) %>%
+  summarise(cycles_in_future = paste(cycle_name, collapse = "; "))
+# merge past, present, and future
+cycle_tbl_summarized <- merge(cycle_tbl_summarized_past,
+                              cycle_tbl_summarized_present,
+                              by = "team_id",
+                              all = TRUE) %>%
+                        merge(.,
+                              cycle_tbl_summarized_future,
+                              by = "team_id",
+                              all = TRUE)
+
+# merge in with tt
+tt <- merge(tt,
+            cycle_tbl_summarized,
+            by = "team_id",
+            all.x = TRUE,
+            all.y = FALSE)
+# clean up
+cycle_tbl_cleaned <- NULL
+cycle_tbl_summarized_past <- NULL
+cycle_tbl_summarized_future <- NULL
+cycle_tbl_summarized_present <- NULL
+
+```
+
+```{r}
+
+### add participation info across cycles
+
+# Use class_tbl to get total expected roster counts for each teacher across classrooms
+teacher_expected_student_counts <- class_tbl %>%
+  group_by(contact_id) %>%
+  summarise(expected_num_students = sum(num_students))
+# get participation within team-cycle-teacher
+d_teachers <- d %>%
+  group_by(team_id, cycle_name, teacher_id, class_id) %>%
+  summarise(num_observed_students = length(unique(userID))) %>%
+  summarise(num_observed_students = sum(num_observed_students))
+# merge in expected student counts for teachers,
+# convert NA to 0 for expected and observed participation,
+# calculate teacher-cycle-level participation
+d_teachers <- merge(d_teachers,
+                    teacher_expected_student_counts,
+                    by.x = "teacher_id",
+                    by.y = "contact_id",
+                    all.x = TRUE,
+                    all.y = FALSE)
+d_teachers$num_observed_students <- ifelse(is.na(d_teachers$num_observed_students),
+                                           0,
+                                           d_teachers$num_observed_students)
+d_teachers$expected_num_students <- ifelse(is.na(d_teachers$expected_num_students),
+                                           0,
+                                           d_teachers$expected_num_students)
+d_teachers <- mutate(d_teachers,
+                     pct_student_participation = num_observed_students / expected_num_students,
+         at_least_80_pct_participated = num_observed_students >= .8 * expected_num_students)
+# merge in practice journals for team-cycle-teachers
+pj_tbl_f <- pj_tbl %>%
+  filter(grepl("EPPracticeJournal", module_label)) %>%
+  rename(cycle_id = parent_id,
+         teacher_id = user_id) %>%
+  mutate(did_practice_journal = TRUE)
+# add "Cycle_" to cycle_id if not there already
+pj_tbl_f$cycle_id <- ifelse(grepl("^Cycle_", pj_tbl_f$cycle_id),
+                            pj_tbl_f$cycle_id,
+                            "Cycle_" %+% pj_tbl_f$cycle_id)
+pj_tbl_f <- merge(pj_tbl_f,
+                  cycle_tbl[, c("cycle_id", "cycle_name")],
+                  by = "cycle_id",
+                  all.x = TRUE,
+                  all.y = FALSE)
+d_teachers <- merge(d_teachers,
+                    pj_tbl_f[, c("teacher_id", "team_id", "cycle_name", "did_practice_journal")],
+                    by = c("teacher_id", "team_id", "cycle_name"),
+                    all.x = TRUE,
+                    all.y = FALSE)
+
+
+# Group to team-cycle level
+d_team_cycle <- d_teachers %>%
+  group_by(team_id, cycle_name) %>%
+  summarise(pct_participating_students = sum(num_observed_students) / sum(expected_num_students),
+          pct_participating_teachers = sum(at_least_80_pct_participated %in% TRUE) /
+                                                length(at_least_80_pct_participated),
+            pct_practice_journals_completed = sum(did_practice_journal %in% TRUE) /
+                                                length(did_practice_journal))
+# merge in stuff from cycle table
+d_team_cycle_merged <- merge(d_team_cycle,
+                             cycle_tbl_summarized[, c("team_id",
+                                                      "most_recent_past_cycle",
+                                                      "cycle_happening_now")],
+                             by = "team_id",
+                             all.x = TRUE,
+                             all.y = FALSE)
+
+# Group to team level to report past and present stats
+d_team <- d_team_cycle_merged %>%
+  group_by(team_id) %>%
+  summarise(pct_participating_teachers_from_most_recent_past_cycle =
+              first(pct_participating_teachers[cycle_name %in% most_recent_past_cycle]),
+            pct_participating_teachers_from_cycle_happening_now = 
+              first(pct_participating_teachers[cycle_name %in% cycle_happening_now]),
+            avg_student_participation_rate = mean(pct_participating_students, na.rm = TRUE),
+            avg_teacher_participation_rate = mean(pct_participating_teachers, na.rm = TRUE),
+            pct_practice_journals_from_most_recent_past_cycle = 
+              first(pct_practice_journals_completed[cycle_name %in% most_recent_past_cycle]),
+            pct_practice_journals_from_cycle_happening_now = 
+              first(pct_practice_journals_completed[cycle_name %in% cycle_happening_now]),
+            avg_practice_journal_completion_rate = mean(pct_practice_journals_completed,
+                                                        na.rm = TRUE))
+
+d_team[, setdiff(names(d_team), "team_id")] <- util.apply_columns(d_team[, setdiff(names(d_team), "team_id")],
+                             smart_percent)
+
+# merge participation info into tt
+tt <- merge(tt,
+            d_team,
+            by = "team_id",
+            all.x = TRUE,
+            all.y = FALSE)
+
+```
+
+
+```{r}
+
+### add info about team-level completion of Copilot tasks
+
+# RECRUITMENT:
+
+# % of teachers on the team that filled out the implementation agreement
+# Get agreement completion records for all teachers, mapped to teams,
+# sum to get total agreements per team,
+# compare to number of teachers per team
+imp_agreements <- pj_tbl %>%
+  filter(module_label %in% "EPImplementationAgreement",
+         progress %in% 100) %>%
+  group_by(team_id) %>%
+  summarise(num_teachers_signed_imp_agreement = length(unique(user_id)))
+tt <- merge(tt,
+            imp_agreements,
+             by = "team_id",
+            all.x = TRUE,
+            all.y = FALSE)
+tt$pct_teachers_signed_imp_agreement <- smart_percent(tt$num_teachers_signed_imp_agreement /
+                                                tt$num_team_members)
+
+# Does team give cert credit?
+cert_credit_info <- team_tbl %>%
+  filter(str_detect(task_data, "credit_available")) %>%
+  mutate(full_credit_string = str_extract(task_data, "\"credit_available\": \"(yes|no|unsure)\""),
+         team_gives_credit_for_ep = str_extract(full_credit_string, "(yes|no|unsure)"),
+         full_credit_string = NULL) %>%
+  select(team_id, team_gives_credit_for_ep)
+tt <- merge(tt,
+            cert_credit_info,
+             by = "team_id",
+            all.x = TRUE,
+            all.y = FALSE)
+
+
+```
+
+```{r}
+
+### clean up tt and save
+
+tt <- tt %>%
+  select(team_name,
+         team_id,
+         captain_name,
+         captain_email,
+         num_team_members,
+         community_name,
+         community_contact_info,
+         created,
+         cycles_past,
+         most_recent_past_cycle,
+         pct_participating_teachers_from_most_recent_past_cycle,
+         pct_practice_journals_from_most_recent_past_cycle,
+         cycle_happening_now,
+         pct_participating_teachers_from_cycle_happening_now,
+         pct_practice_journals_from_cycle_happening_now,
+         cycles_in_future,
+         avg_student_participation_rate,
+         avg_teacher_participation_rate,
+         avg_practice_journal_completion_rate,
+         pct_teachers_signed_imp_agreement,
+         team_gives_credit_for_ep)
+
+# Save to crypt
+write.csv(tt, "Team info for EP participation tracking (READ ONLY).csv")
+
+
+```

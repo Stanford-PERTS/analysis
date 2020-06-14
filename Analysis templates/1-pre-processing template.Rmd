@@ -1,0 +1,197 @@
+---
+title: "DESCRIPTIVE TITLE"
+author: "NAMES OF CONTRIBUTING ANALYST(S)"
+date: "MONTH/YEAR (USUALLY)"
+output: 
+  html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: ~/Sites/gymnast/Rmd/RMD_styles.css
+---
+
+# Introduction
+
+[DESCRIBE THE PURPOSE AND CONTENT OF THIS DOCUMENT]
+
+## Input Files
+
+[LIST AND DESCRIBE ALL FILES THAT ARE READ INTO THIS SCRIPT]
+
+## Output Files
+
+[LIST AND DESCRIBE ALL FILES THAT ARE WRITTEN FROM THIS SCRIPT]
+
+
+# Setting the environment
+
+## Set User Inputs
+[SET USER INPUT VARIABLES BELOW; USER INPUT VARIABLES ARE
+INFORMATION THAT NEEDS TO BE SET BY THE ANALYST; E.G., 
+OPTIONS TO EVALUATE PARTICULAR CHUNKS, ANY SCRIPT-LEVEL 
+CONDITIONAL LOGIC, ETC.CONSTANTS SHOULD BE IN ALL CAPS]
+
+```{r results='asis'}
+
+```
+
+
+## Load libraries
+
+```{r results='asis', message=FALSE, warning=FALSE}
+# source gymnast functions
+tryCatch({
+    source("~/Sites/gymnast/R/util.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_graphing.R", chdir = TRUE)
+}, error = function(e){
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_legacy.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_qualtrics_cleaning.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_graphing.R")
+})
+
+# source any additional packages that are NOT loaded in gymnast
+# note that almost any package we would ever use is always in gymnast
+
+# set stringsAsFactors to FALSE, and add any other global R settings
+options(stringsAsFactors = FALSE)
+
+# set results to 'asis' for all chunks
+# (can also add any global rmarkdown settings here)
+opts_chunk$set(results = 'asis')
+```
+
+## Local helper functions
+
+[PUT ALL YOUR LOCALLY-CREATED HELPER FUNCTIONS HERE. MAKE SURE TO 
+ CONTRIBUTE ANY GOOD ONES TO the [Miscellaneous Code Archive](https://docs.google.com/document/d/10_K8clWHUQIbO5BWXViiZBXMbRDkni7ypuBJ54l_KWE/edit) 
+ BY CREATING A [gist](https://gist.github.com/).]
+
+
+```{r}
+
+# lh.helper_function <- function()
+
+```
+
+# Data Preparation
+
+[THIS IS A GOOD PLACE TO LIST ASSUMPTIONS ABOUT THE STRUCTURE OF THE INCOMING DATA]
+
+## Load data
+
+```{r}
+
+# source salt file--note that a salt is a password, and thus should NEVER be printed
+# directly to the console or to the html output!!!! It should only be sourced directly 
+# from a crypt folder.
+
+# salt <- source("salt.R")
+
+data_files_to_load <- list(
+    "br_1" = "baseline_records_1.csv",
+    "cr_1" = "course_records_1.csv"
+)
+
+key_files_to_load <- list(
+    "ck" = "column_key.csv",
+    "tdk" = "term_dates_key.csv",
+    "lgk" = "letter_grade_key.csv",
+    "v1k" = "variable1_key.csv", # e.g., race-recode values
+    "v2k" = "variable2_key.csv"
+)
+
+# raw_file_paths <- util.find_crypt_paths(files_to_load)
+
+# d_raw is a list of data.frames corresponding to the .csvs in `files_to_load`
+# d_raw <- util.read_csv_files(raw_file_paths) 
+
+
+
+```
+
+## Pre-process datasets
+
+[USE THIS SECTION FOR CLEANING OPERATIONS INVOLVING INDIVIDUAL DATA FRAMES]
+
+### De-identify
+
+```{r}
+
+# source the salt
+# source(util.find_crypt_paths(list(salt = "salt.R"))$salt)
+
+# loop through d_raw and:
+# - Hash all id variables with the salt
+# - Remove all non-whitelisted variables with uniqueness above a certain threshold
+
+# d_di is a list of de-identified data.frames
+
+# here you can save a hash/id table in the crypt folder, too. This can be useful 
+# for error checking.
+
+```
+
+### Clean columns
+
+#### Standardize column names
+
+```{r}
+# d_rn is a list of renamed data.frames
+
+```
+
+#### Standardize column values
+
+* any variable recoding (ideally using a key file)
+* includes grade recoding with `glk` if applicable
+
+```{r}
+# d_rc  is a renamed, recoded data.frames (or list of data.frames)
+# this convention works well in the absence of key files:
+
+# key <- list(old_values = c(1,2,3), new_values = c("a", "b", "c"))
+# d_rc$var <- util.recode(d_rc$var, key$old_values, key$new_values)
+```
+
+### Clean rows
+
+#### Logic for handling rows with missing data
+
+
+#### Logic for handling duplicated index values
+
+```{r}
+
+# d_dh is a data.frame with duplicates handled (or list of data.frames)
+
+# Frequently used procedure for handling duplicates in survey data
+# 1. Remove all rows where time on task < 2 minutes
+# 2. Identify subject_ids that are still duplicated
+# 3. Remove all records corresponding to the still-duplicated IDs
+
+```
+
+### Perform key merges
+
+A key merge is any merge that merges a key file with a 
+data.frame without changing its type; e.g., merging a stem_key into a 
+course_records data.frame.
+
+### Conduct checks on the pre-processed data
+
+#### Unique indexes
+Make sure your indexes are unique (could use [check_index_is_unique](https://gist.github.com/sarahgripshover/3192e2ce1128bb5e79fc3edc2471d9eb)).
+
+#### Expected numbers of rows
+
+This check is especially important if you've done key merges
+
+### Optionally, save de-identified, pre-processed data
+
+[YOU MAY WISH TO CREATE A SAVED VERSION OF YOUR DE-IDENTIFIED, PRE-PROCESSED 
+DATA FILES, ESPECIALLY IF PRE-PROCESSING IS SLOW. IF SO, DO SO HERE.]
+
+```{r}
+
+```

@@ -1,0 +1,338 @@
+---
+title: "EP analysis 2018-2019.Rmd"
+author: "Sarah Gripshover"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  pdf_document:
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+    toc: yes
+    toc_depth: 2
+  html_document:
+    fig_caption: yes
+    fig_height: 7
+    fig_width: 9
+    toc_depth: 2  
+---
+
+This document contains all supplementary and exploratory analyses that were used to write the Study 1 section of the [technical supplement to the EP report](https://docs.google.com/document/d/1RJsKdoXp9uonxbs82f2mJvT5eiFkRV2IkISeGjPlBJs/edit?pli=1#). It is based on Dan Greene's cleaning and analysis document entitled "4 - EP analysis 18-19.Rmd". Dan's file was used to obtain all _preregistered_ results that appear in the technical supplement.
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      results = 'asis',
+                      fig.width = 9,
+                      fig.height = 7)
+
+```
+
+```{r, include=FALSE}
+
+############### USER-DEFINED INPUTS #####################################
+
+general_data_folder_crypt_path <- "Data for 2018-2019 EP analysis"
+input_data_crypt_path <- "Data for 2018-2019 EP analysis/4 - 2018-2019 cleaned data for PERTS analysis.csv"
+
+```
+
+```{r, results='hide', echo = FALSE}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+options(xtable.comment = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    library(tidyverse)
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    gymnast_install()
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(scales)
+
+# Set "today" - by default, use the real today
+TODAY <- lubridate::ymd(Sys.Date())
+
+```
+
+```{r}
+
+############### LOAD DATA #####################################
+
+d <- util.find_crypt_paths(list(a = input_data_crypt_path))$a %>%
+  read.csv()
+
+# shorten race code for presentation purposes
+d$race[d$race %in% "Native American, Other, Black or African American, Hispanic or Latino"] <-
+  "NatAm/Other/Black/Hisp"
+
+# also get first-measurements
+d_first <- dplyr::filter(d, survey_ordinal %in% 1)
+
+# Create first-to-last df for H2
+# And drop all rows where survey_ordinal_ftl == 0, because they are students with just one observation.
+# note that this maneuver actually doesn't work for the items that weren't administered every week.
+# for those we have to do something else.
+
+last_of_more_than_one <- function(x){
+	# takes ordered vector x and returns NA if x has one non-blank element, otherwise returns the last element
+    if(length(x) < 2){
+        return(NA)
+    } else(
+        return(x[length(x)])
+    )
+}
+
+# last_of_more_than_one(c(1,2,3,4,5)) # 5
+# last_of_more_than_one(c(1,2,3,NA,5)) # 5
+# last_of_more_than_one(5) # NA
+
+take_nonblanks <- function(x){
+    # returns all non-blank elements of x
+    return(x[!util.is_blank(x)])
+}
+
+#take_nonblanks(c("", 1, "a", NA))
+# [1] "1" "a"
+
+
+d_wide <- d %>%
+    arrange(student_id, survey_ordinal) %>%
+    group_by(student_id) %>%
+    summarise(
+        
+        # first and last values
+                
+        # nowNote that we always take the first non-blank value for "first" observations, and for "last" 
+        # observations we take the last non-blank value UNLESS a subject has only one value, and in that case NA is returned.
+        # note that occasionally this will mean a person's "first" and "last" values can be from different observations
+        # for different variables. Use the last_*_ordinal and days_between variables to make sense of these differences
+        # in cadence.
+            
+        # engagement
+        effort_first = first(take_nonblanks(effort)),
+        effort_last = last_of_more_than_one(take_nonblanks(effort)),
+        attn_first = first(take_nonblanks(attn)),
+        attn_last = last_of_more_than_one(take_nonblanks(attn)),
+        
+        #combined lc score
+        comb_lc_score_first = first(take_nonblanks(comb_lc_score)),
+        comb_lc_score_last = last_of_more_than_one(take_nonblanks(comb_lc_score)),
+        
+        # subscales
+        fg_first = first(take_nonblanks(fg)),
+        fg_last = last_of_more_than_one(take_nonblanks(fg)),
+        mw_first = first(take_nonblanks(mw)),
+        mw_last = last_of_more_than_one(take_nonblanks(fg)),
+        tc_first = first(take_nonblanks(tc)),
+        tc_last = last_of_more_than_one(take_nonblanks(fg)),
+        
+        # validation items
+        expected_grade_first = first(take_nonblanks(expected_grade)),
+        expected_grade_last = last_of_more_than_one(take_nonblanks(expected_grade)),
+        gms_first = first(take_nonblanks(gms)),
+        gms_last = last_of_more_than_one(take_nonblanks(gms)),
+        belonging_first = first(take_nonblanks(belonging)),
+        belonging_last = last_of_more_than_one(take_nonblanks(belonging)),
+        teacher_mastery_first = first(take_nonblanks(teacher_mastery)),
+        teacher_mastery_last = last_of_more_than_one(take_nonblanks(teacher_mastery)),
+        
+        # demographics
+        gender = first(gender),
+        race = first(race),
+        prior_gpa = first(prior_gpa),
+        class_id = first(class_id),
+        teacher_id = first(teacher_id),
+        team_id = first(team_id),
+        
+        # timing variables
+        
+        # last LC survey ordinal is the last time they got a learning conditions survey
+        # so it's the survey_ordinal corresponding to the last non-blank lc value
+        # these are useful for summarizing information about how the first and last timepoints relate to each other
+        last_lc_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(comb_lc_score)]),
+        last_gms_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(gms)]),
+        last_belonging_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(belonging)]),
+        last_teacher_mastery_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(teacher_mastery)]),
+        last_effort_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(effort)]),
+        
+        # also get a sense of when the surveys were taken to have some understanding of seasonality, delay etc.
+        first_lc_date = as.Date(first(StartDate[!util.is_blank(comb_lc_score)])),
+        last_lc_date = as.Date(last_of_more_than_one(StartDate[!util.is_blank(comb_lc_score)])),
+        first_gms_date = as.Date(first(StartDate[!util.is_blank(gms)])),
+        last_gms_date = as.Date(last_of_more_than_one(StartDate[!util.is_blank(gms)])),
+        
+        # days_between first and last observations
+        days_between_lc_ftl = difftime(last_lc_date, first_lc_date, units = "days"),
+        days_between_gms_ftl = difftime(last_gms_date, first_gms_date, units = "days")
+
+    ) %>%
+    mutate(
+        # secondary column calculations (based on columns computed in the summarise() call)
+        comb_lc_score_first_bins = floor(comb_lc_score_first),
+        comb_lc_score_last_bins = floor(comb_lc_score_last),
+        
+         # cutoffs
+        gms_str_agr_first = ifelse(gms_first == 5, 1, 0),
+        gms_str_agr_last = ifelse(gms_last == 5, 1, 0),
+        belonging_str_agr_first = ifelse(belonging_first == 5, 1, 0),
+        belonging_str_agr_last = ifelse(belonging_last == 5, 1, 0),
+        
+        gms_agr_first = ifelse(gms_first >= 4, 1, 0),
+        gms_agr_last = ifelse(gms_last >= 4, 1, 0),
+        belonging_agr_first = ifelse(belonging_first >= 4, 1, 0),
+        belonging_agr_last = ifelse(belonging_last >= 4, 1, 0),
+        
+        # deltas
+        effort_ftl = effort_last - effort_first,
+        attn_ftl = attn_last - attn_first,
+        comb_lc_score_ftl = comb_lc_score_last - comb_lc_score_first,
+        fg_ftl = fg_last - fg_first,
+        mw_ftl = mw_last - mw_first,
+        tc_ftl = tc_last - tc_first,
+        expected_grade_ftl = expected_grade_last - expected_grade_first,
+        gms_ftl = gms_last - gms_first,
+        belonging_ftl = belonging_last - belonging_first,
+        teacher_mastery_ftl = teacher_mastery_last - teacher_mastery_first,
+        gms_str_agr_first_ftl = gms_str_agr_last - gms_str_agr_first,
+        
+        # improvement 
+        lc_improved = comb_lc_score_ftl > 0
+
+    )
+
+
+# Students who reported learning conditions as positive in a given week were X% more likely to say they put a lot of effort
+
+d$lc_agr_stragr <- d$comb_lc_score >= 6
+d$lc_agree_disagree <- d$comb_lc_score >= 5
+
+d %>%
+    dplyr::filter(!is.na(lc_agree_disagree)) %>%
+    group_by(lc_agree_disagree) %>%
+    summarise(
+        strong_effort = mean(effort == 5, na.rm = T),
+        strong_attn = mean(attn == 5, na.rm = T)
+    ) %>%
+    xtable()
+
+```
+# Demograhics
+```{r}
+d_wide %>%
+    group_by(race) %>%
+    summarise(n = n()) %>%
+    mutate(race = ifelse(is.na(race), "Missing", race)) %>%
+    mutate(race = ifelse(race %in% "masked", "Masked", race)) %>%
+    xtable()
+
+d_wide %>%
+    group_by(gender) %>%
+    summarise(n = n()) %>%
+    mutate(gender = ifelse(is.na(gender), "Missing", gender)) %>%
+    mutate(gender = ifelse(gender %in% "masked", "Masked", gender)) %>%
+    xtable()
+
+```
+
+
+```{r}
+prop_summaries <- d_wide %>%
+    group_by(delta_lc = floor(comb_lc_score_ftl)) %>%
+    dplyr::filter(
+        !is.na(last_lc_survey_ordinal),
+        !is.na(last_gms_survey_ordinal),
+        !is.na(last_belonging_survey_ordinal)
+    ) %>%
+    summarise(
+        had_gms_first_str_agr = mean(gms_str_agr_first, na.rm = TRUE),
+        had_gms_last_str_agr = mean(gms_str_agr_last, na.rm = TRUE),
+        had_gms_first_agr = mean(gms_agr_first, na.rm = TRUE),
+        had_gms_last_agr = mean(gms_agr_last, na.rm = TRUE),
+        had_belonging_first_str_agr = mean(belonging_str_agr_first, na.rm = TRUE),
+        had_belonging_last_str_agr = mean(belonging_str_agr_last, na.rm = TRUE),
+        had_belonging_first_agr = mean(belonging_agr_first, na.rm = TRUE),
+        had_belonging_last_agr = mean(belonging_agr_last, na.rm = TRUE)
+    ) %>%
+    util.round_df(2)
+
+
+d_wide %>%
+    group_by(lc_improved) %>%
+    dplyr::filter(
+        !is.na(last_lc_survey_ordinal),
+        !is.na(last_gms_survey_ordinal),
+        !is.na(last_belonging_survey_ordinal)
+    ) %>%
+    summarise(
+        belonging_improved = mean(belonging_ftl > 0),
+        gms_improved = mean(gms_ftl > 0)
+    ) %>%
+    xtable()
+
+
+
+d_wide %>% 
+    dplyr::filter(
+        !is.na(belonging_last),
+        !is.na(gms_last)
+    ) %>%
+    group_by(
+        floor(comb_lc_score_ftl)
+    ) %>%
+    summarise(
+        belonging = mean(gms_str_agr_last),
+        gms = mean(gms_last)
+    ) %>%
+    xtable()
+
+# among fixed-mindset students, how many developed a growth mindset vs. not?
+d_wide %>%
+    dplyr::filter(
+        !is.na(last_lc_survey_ordinal),
+        !is.na(last_gms_survey_ordinal)
+    ) %>%
+    group_by(gms_agr_first, lc_improved) %>%
+    summarise(gms_last = round(mean(gms_agr_last), 2)) %>%
+    xtable()
+
+# among low-belonging students, how many developed a sense of belonging vs. not?
+d_wide %>%
+    dplyr::filter(
+        !is.na(last_lc_survey_ordinal),
+        !is.na(last_belonging_survey_ordinal)
+    ) %>%
+    group_by(belonging_agr_first, lc_improved) %>%
+    summarise(belonging_last = round(mean(belonging_agr_last), 2)) %>%
+    xtable()
+```
+
+
+
+```{r}
+
+
+```
+
+
+

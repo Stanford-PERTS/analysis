@@ -1,0 +1,1343 @@
+---
+output:
+  html_document:
+    template: engagement_diagnostic_template.html
+---
+
+```{r, results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+
+##############################################################################
+##  Set parameters
+##  (this is independent of subsetting and of agg_metrics, so it can be kept in the Rmd)
+##
+
+library(tools)
+options(scipen=999) # removes scientific notation
+
+max_table_width <- 7
+# this controls how wide the participation summary tables can be (e.g. number of weeks)
+# we may need something like this for the line graphs too
+
+max_time_chart_width <-7
+# controls how many weeks are included in the time chart
+
+# all subsets
+all_subsets_orig <- c(
+          "Eng. Speaker",
+          "Eng. Learner",
+          "White & Asian",
+          "Blk, Lat, & Nat",
+          "Male",
+          "Female",
+          "All Students"
+)
+
+# Clean up names for presentation
+title_for_full_dataset <- team_id %+% " " %+% study_id
+reporting_unit_title <- format_reporting_units(reporting_unit_id)
+team_title <- format_reporting_units(team_id)
+reporting_unit_title_full <- paste("**Class:** ", reporting_unit_title,".", sep = "")
+
+## This report must be called from the engagement_metascript.R file.
+# expected variables from metascript
+# NOTE: this will change after the code update.
+expected_variables <- c("study_id","team_id","reporting_unit_id","data_cat",
+                        "SUBSETS")
+nothing <- lapply(expected_variables, function(var){
+    if(!exists(var)){
+        stop(var %+% " was not passed in!")
+    }
+})
+
+
+
+
+##############################################################################
+##  Anonymize report if desired (replace team and unit names with fake ones)
+##  This might not be necessary to keep, but it seems pretty trivial to do in the Rmd with an agg_metrics
+##  type data set. You're just doing find-and-replace on a few fields. 
+##
+team_id_unhashed <- team_id
+reporting_unit_id_unhashed <- reporting_unit_id
+if (ANONYMOUS) {
+  data_cat$team_id[data_cat$team_id %in% team_id] <- "Dream Team"
+  data_cat$reporting_unit_id[data_cat$reporting_unit_id %in% reporting_unit_id] <-
+    "Mr. Smith Math 1"
+  data_cat_not_imputed$team_id[data_cat_not_imputed$team_id %in% team_id] <- "Dream Team"
+  data_cat_not_imputed$reporting_unit_id[data_cat_not_imputed$reporting_unit_id %in% reporting_unit_id] <-
+    "Mr. Smith Math 1"
+
+  team_id <- "Dream Team"
+  reporting_unit_id <- "Mr. Smith Math 1"
+}
+
+
+
+##############################################################################
+##  Filter Data to Desired Team x Study.
+##  Creates a filtered data frame "d" and possibly sets TEAM_ONLY to true.
+##  In the new version of this, the agg_metrics data frame will get filtered by
+##  the same variables, so they must be present.
+##
+
+# d becomes the full dataset used for this report
+# @sg nit: these grepls might not be robust. Might want to
+# replace with %in% and good study naming principles
+
+
+d <- data_cat[ grepl(study_id, data_cat$Study_ID) &
+                   grepl(team_id_triton, data_cat$team_id_triton), ]
+
+# if there are not enough students, create team only report
+#buff_df <- d[d$reporting_unit_id == reporting_unit_id,]
+buff_df <- d[d$reporting_unit_id_triton == reporting_unit_id_triton,]
+n_users <- buff_df$userID %>% unique %>% length
+if (n_users < min_cell) {
+  TEAM_ONLY = TRUE
+}
+buff_df <- NULL
+
+# If this report is team-only, then don't report any RU title
+if (TEAM_ONLY) {reporting_unit_title_full <- ""}
+
+##############################################################################
+##  Identify "most recent learning conditions" to later cut LCs that are not wanted by the team.
+##  This could go in the metascript (scaled to cut for all teams at the same time),
+##  or in the Rmd.
+##  Or we don't need this function at all, but we should decide where we WOULD want it to go.
+##  Do we want the Rmd to have any data-cleaning? Is it OK if the metascript makes an object that
+##  cuts out data that people don't want to see? I think it's clearer for the metascript to create
+##  complete, high-integrity reference data, and the Rmd to do cutting for the presentation needs of individuals.
+##
+##  If the Rmd does this, it will be on agg_metrics and not d, so the code will involve identifying the
+##  most recent learning conditions (same) and then filtering ROWS that involve those learning conditions (different).
+##  And right now this happens MUCH later in the code (Ctrl-F "most_recent_learning_cond").
+##
+##
+
+# Learning conditions can change from one week to the next. Since we have
+# data imputation procedure, even when a learning condition is not present,
+# if a participant has old data on a particular condition, he or she will keep
+# getting imputed data for the same condition. I will use a variable from qualtrics
+# called learning_conditions, which records which set of questions were displayed for
+# a given participant during a given session. If for a particular week, there were only
+# two conditions I will display only those two, and I will ignore the other one. This doesn't
+# interfere with imputation, but only with displaying the conditions.
+# There is also potential issue with Team vs Classroom. In general all classrooms in
+# team should have the same conditions. However, according to Chris, the platform might not be
+# properly updated, so there might be some differences. For that reason, I will take most recent
+# learning conditions on the level of classroom (unless TEAM_ONLY is TRUE).
+
+# note: most_recent_week here is the most_recent_week for which we have at least one
+# non_imputed row
+
+# extract the learning conditions from the last week of data collection
+buff_df <- d[!d$imputed_row,]
+
+most_recent_learning_cond_team <-
+    buff_df$learning_conditions[buff_df$week_start == max(buff_df$week_start, na.rm = T)] %>%
+    unique %>%
+    paste(., collapse = ",") %>%
+    strsplit(., ",") %>%
+    unlist %>%
+    trimws(., which = "both") %>%
+    gsub("-","_",.) %>% #there is different spelling in triton and here
+    unique
+
+most_recent_learning_cond_class <- c()
+if (!TEAM_ONLY) {
+  most_recent_learning_cond_class <-
+    buff_df$learning_conditions[buff_df$week_start == max(buff_df$week_start, na.rm = T) &
+                            buff_df$reporting_unit_id_triton == reporting_unit_id_triton] %>%
+    unique %>%
+    paste(., collapse = ",") %>%
+    strsplit(., ",") %>%
+    unlist %>%
+    trimws(., which = "both") %>%
+    gsub("-","_",.) %>% #there is different spelling in triton and here
+    unique
+}
+
+# if most_recent_learning_conditions is empty, use the team level data
+if (TEAM_ONLY | length(most_recent_learning_cond_class) == 0 ){
+  most_recent_learning_cond = most_recent_learning_cond_team
+} else {
+  most_recent_learning_cond <- most_recent_learning_cond_class
+}
+
+buff_df <- NULL
+
+
+##############################################################################
+##  Create a list "datasets" with one dataset for the desired group and another for all groups in the study.
+##  Each will be subjected to disaggregation by subset.
+##
+##  
+
+# SG note: datasets is a two-element list containing
+# (1) the full dataset (containing all groups within the team),
+# (2) the smaller reporting_unit within the organization that the report
+# is for. (Could be a single classroom, or a whole school. But
+# it's always a smaller unit within the larger unit)
+
+# Note on treating groups differently from subsets:
+#   I am duplicating groups because they are not mutually exclusive.
+#   (Unlike categories within a given subset.)
+
+# Setup
+datasets <- list()
+all_reporting_units_dataset_index <- team_id
+
+# Put the larger dataset "d" in the list, under the index of the team_id.
+# This is all the data for the team level AND reporting units inside it.
+# If there's no data, complain.
+datasets[[all_reporting_units_dataset_index]] <- d
+if (nrow(datasets[[all_reporting_units_dataset_index]]) == 0) {
+  msg <- paste("There is not enough data in the input file for team ",
+               team_id,
+               ". Try increasing max_weeks_missing. No report is generated.",
+               sep = "")
+  stop(msg)
+}
+# Tag "d" with the team_id, call it "dataset".
+# Note - why not call it "team_id"?
+datasets[[all_reporting_units_dataset_index]]$dataset <- all_reporting_units_dataset_index
+
+# If this report is not team-only, then you also need to have data for the SINGLE reporting unit under consideration.
+# Pull out these data and put them in the "datasets" list under the reporting unit ID.
+# If there's no data, complain.
+# NOTE FOR DAN: this is a dataset-level thing that needs to be group-by'd.
+if(!TEAM_ONLY){
+  datasets[[reporting_unit_id]] <- d[d$reporting_unit_id_triton %in% reporting_unit_id_triton, ]
+  if (nrow(datasets[[reporting_unit_id]]) == 0) {
+    msg <- paste("There is not enough data in the input file for ",
+                 reporting_unit_id,
+                 " in team ",
+                 team_id,
+                 ". Try increasing max_weeks_missing. No report is generated.",
+                 sep = "")
+    stop(msg)
+  }
+  # And again, tag the reporting-unit-level data with a "dataset" column that has the RU ID.
+  datasets[[reporting_unit_id]]$dataset <- reporting_unit_id
+}
+
+
+##############################################################################
+##  Note the rows in each data set that are from the most recent week.
+##  Tag each data set with a T/F column "most_recent" indicating this.
+##  NOTE: This only happens for the team data set if it's team only (makes sense),
+##  and it ONLY happens for the RU data set if it's not team only (what?).
+##  It should always tag the team-level data, and maybe also tag the RU-level data if needed or available.
+##
+# NOTE FOR DAN: this is a dataset-level thing that can be group-by'd.
+
+if(!TEAM_ONLY){
+  most_recent_week_start <- max(datasets[[reporting_unit_id]]$week_start, na.rm = T)
+  datasets[[reporting_unit_id]]$most_recent <- datasets[[reporting_unit_id]]$week_start %in% most_recent_week_start
+} else {
+  most_recent_week_start <- max(datasets[[team_id]]$week_start, na.rm = T)
+  datasets[[team_id]]$most_recent <- datasets[[team_id]]$week_start %in% most_recent_week_start
+}
+
+
+
+##############################################################################
+##  Create a melted data frame out of both of the datasets put together.
+##  Now instead of one column per question, questions are rows.
+##  Also calculate whether a question value was in the good range,
+##  and drop questions with undefined range.
+##  The result is datasets_melted, which is roughly person x week x metric.
+##  It contains data for (1) the entire team, and (2) (if this report isn't team-only)
+##  data repeated for the focal reporting unit.
+##  (1) and (2) are distinguished with the "dataset" column in datasets_melted.
+##
+##  This should get moved to the metascript, where it should scale intuitively
+##  because rows are already marked with dataset.
+
+id_vars <- c("dataset","week_start", SUBSETS, "imputed_row")
+if (!TEAM_ONLY) {
+  datasets_bound  <- util.rbind_many(datasets, keep="union")
+} else {
+  datasets_bound <- datasets[[1]]
+}
+
+datasets_melted <- melt(datasets_bound, id.vars = c(id_vars))
+datasets_melted$imputed_row <- datasets_melted$imputed_row %>% as.numeric()
+datasets_melted$question_code <- datasets_melted$variable
+datasets_melted$variable <- NULL
+
+# add the information from items.csv
+datasets_melted <-
+    merge(datasets_melted,
+          items[,c("question_code","min_good","max_good")],
+          by="question_code")
+
+# calculate whether response is in the "good" range for that metric
+datasets_melted$metric <- datasets_melted$question_code
+datasets_melted$value <- as.numeric(datasets_melted$value)
+datasets_melted$good_range <-
+    datasets_melted$value <= datasets_melted$max_good &
+    datasets_melted$value >= datasets_melted$min_good
+datasets_melted$good_range <- ifelse(datasets_melted$good_range,1,0)
+
+# metrics have an undefined range if NA values appear in good_range
+# that do NOT correspond to NAs in the `value` column. (when
+# NA values appear in the good_range column AND the value column,
+# that just means there's missing data; i.e., the survey-taker
+# missed that particular question)
+metrics_with_undefined_range <-
+    datasets_melted$metric[
+        is.na(datasets_melted$good_range) & !is.na(datasets_melted$value)
+    ] %>%
+    as.character() %>%
+    unique()
+
+# drop any metrics with undefined ranges
+datasets_melted <-
+    datasets_melted[! datasets_melted$metric %in% metrics_with_undefined_range,]
+
+
+##############################################################################
+##  Aggregate "datasets_melted" by its metrics, AND by demographic subsets, to create "ag_metrics_list".
+##  ag_metrics_list is a list of ag_metrics data frames that reflect the aggregated metrics for different subsets.
+##  Each row of a single ag_metrics data frame in the list represents the stats for a metric for a particular week
+##  for a particular data set and subset group.
+##  So each little ag_metrics data frame has rows identified by metric, week, and dataset,
+##  and the entire data frame is for a single subset (column called "subset").
+##  The list spans all subsets.
+##  After creating all ag_metrics frames for all subsets, we rbind the whole list to make a big monster
+##  ag_metrics data frame with repeated rows galore.
+##  ag_metrics_list is never used again!
+##
+## In the metascript, this section will need to get refactored to apply to ALL the data.
+## Likely that we can avoid this list business.
+
+ag_metrics_list <- list()
+
+# Start by creating an entry in ag_metrics_list called "Full" that is the aggregated metric info for each
+# metric x week-start x dataset.
+# Tag it with the subset label "All Students".
+ag_metrics_list[["Full"]] <- datasets_melted %>%
+    group_by( metric, week_start, dataset ) %>%
+    summarise( pct_imputed = mean(imputed_row, na.rm=T),
+               pct_good = mean(good_range, na.rm=T) ,
+               mean_value = mean(value, na.rm=T),
+               se = se(good_range),
+               n = length(good_range),
+               subset_feature="All Students"
+    ) %>% data.frame()
+ag_metrics_list[["Full"]][,"subset"] <- "All Students"
+ag_metrics_list[["Full"]][,"subset_label"]  <-  "All Students"
+
+# Then iterate through each possible subset, creating a new little ag_metrics dataframe for
+# that subset and appending it to the list
+for(subset in SUBSETS){
+    grouping <- c("metric","week_start", "dataset", subset)
+    subset_ag_dataset <-
+        datasets_melted %>%
+        group_by_( .dots=grouping ) %>%
+        summarise( pct_imputed = mean(imputed_row, na.rm=T),
+                   pct_good = mean(good_range, na.rm=T) ,
+                   mean_value = mean(value, na.rm=T),
+                   se = se(good_range),
+                   n = length(good_range),
+                   subset_feature = subset
+        ) %>% data.frame()
+    subset_ag_dataset[,"subset"] <- subset_ag_dataset[,subset]
+    subset_ag_dataset[,"subset_label"] <-
+        paste0( subset_ag_dataset[,subset],
+               rep(" Students", nrow(subset_ag_dataset)))
+
+    ag_metrics_list[[subset]] <- subset_ag_dataset
+}
+
+# Finally, make a giant master ag_metrics data frame by rbinding all the little ones together.
+ag_metrics <- util.rbind_intersection(ag_metrics_list) %>%
+    filter(!is.na(subset))
+
+
+##############################################################################
+##  Privacy
+##  Remove any subset with a group that has n < min_cell.
+##  Note: removing just the offending offending cell not good enough because
+##  let's say n=30, total=72%, Latino=74%. If only one non-Latino,
+##      you know they're in the "bad" range.
+##  pixelate groups with no variance (add se even if it does not exist)
+
+# ag_metrics$pct_good[ag_metrics$n < min_cell] <- NA
+
+# pixelate se and pct_good
+# if no variance, impute smallest non-zero se
+# if no pct_good, impute one person worth of it
+ag_metrics$se[ag_metrics$se == 0] <- min(ag_metrics$se[ag_metrics$se > 0], na.rm = TRUE)
+ag_metrics$se[is.na(ag_metrics$se) & ! is.na(ag_metrics$pct_good)] <-
+    min(ag_metrics$se[ag_metrics$se > 0 ], na.rm=TRUE)
+# here we're replacing "0" with the smallest possible proportion of "good" responses
+# so as not to implicate a whole group of students for having uniformly
+# "bad" responses.
+ag_metrics$pct_good[ag_metrics$pct_good %in% 0] <-
+    1 / ag_metrics$n[ag_metrics$pct_good %in% 0]
+
+
+# find all the rows corresponding to small n's
+small_rows <- ag_metrics[ag_metrics$n < min_cell,]
+# currently this line does not include groups which are missing.
+# their sample size is not 0, they are just missing. This leads to
+# the problem that the counterparts of the n of 0 groups are not being
+# excluded
+
+# A non-elegant solution here (it will be better to do it on the level
+# of melt and cast) :
+
+# I will remove those categories which have only one level (e.g. only male, or only White)
+# I will refer to those as large_rows (because their n i high)
+# I will also remove those rows with n smaller than the minimum allowed
+# Those are referred to as small rows (because n is small)
+
+# I assume that there are only two levels per category here
+large_rows <- ag_metrics %>%
+  group_by(
+    dataset, week_start,subset_feature,metric) %>%
+  summarise(n_levels = n()) %>%
+  filter(subset_feature != "All Students") %>%
+  mutate(delete_small_subset = TRUE)
+
+# check if the assumption is correct
+if (max(large_rows$n_levels, na.rm = T) > 2) {
+   msg <-
+    "The assumption for binary comaprisons does not hold" %+%
+    team_id %+% ", " %+% reporting_unit_id
+  stop(msg)
+}
+
+# select only those categories which have only one level
+large_subsets <-
+  large_rows[large_rows$n_levels %in% 1,]  %>%
+  select(- n_levels) %>%
+  unique()
+
+small_subsets <- small_rows[,c("dataset", "week_start","subset_feature","metric")] %>%
+                    unique() %>%
+                    mutate(delete_small_subset = TRUE)
+
+small_subsets <- bind_rows(small_subsets, large_subsets)
+small_subsets <- small_subsets[!duplicated(small_subsets),]
+# remove duplicates (e.g. those who have only one level, such as Female, and n = 2)
+
+
+# delete values from all rows matching any subset feature/metric/dataset/week start
+# combos that had small n's. That way, you're not just deleting e.g., the
+# one gender value with < 5 responses; you're deleting gender as a category
+# from the report for that dataset/metric/day.
+ag_metrics <- merge(
+    ag_metrics,
+    small_subsets,
+    by = c("dataset", "week_start","subset_feature","metric"),
+    all = TRUE
+) %>%
+    mutate(delete_small_subset = !is.na(delete_small_subset))
+
+ag_metrics[ ag_metrics$delete_small_subset, c("pct_good","se") ] <- NA
+
+ag_metrics$grand_mean <- ifelse(ag_metrics$subset %in% "All Students","All Students","Subset")
+
+
+##############################################################################
+##  Create a participation table using the non-imputed data.
+##  Note - this section does not rely on the code immediately above.
+##
+
+particip_summary_input_df <-
+  data_cat_not_imputed[
+    grepl(study_id, data_cat_not_imputed$Study_ID) &
+    grepl(team_id_triton, data_cat_not_imputed$team_id_triton),
+  ]
+
+# if the incoming data has zero rows, do not build a table
+
+zero_length_table <- nrow(particip_summary_input_df) == 0
+if (!zero_length_table){
+  # filter out those who particpated more than once per week (we care only about frequencies
+  # so, no need to worry about latest enntries here)
+  particip_summary_input_df$comb_id <-
+    paste(particip_summary_input_df$userID,
+          particip_summary_input_df$team_id,
+          particip_summary_input_df$reporting_unit_id_triton,
+          particip_summary_input_df$week_start,
+          sep = "_")
+
+  particip_summary_input_df <- particip_summary_input_df[
+    !duplicated(particip_summary_input_df$comb_id), ] #in case s.o. particpated more than once per week
+
+  total_n_df <- particip_summary_input_df %>%
+     select(userID, team_id, reporting_unit_id, reporting_unit_id_triton)
+
+  total_n_df <- total_n_df[!duplicated(total_n_df),]
+
+  team_n <- nrow(total_n_df)
+  ru_n <-   total_n_df[total_n_df$reporting_unit_id_triton %in% reporting_unit_id_triton,] %>% nrow
+  #ru stays for reporting unit
+
+  buff_df <- particip_summary_input_df %>%
+    group_by(team_id, reporting_unit_id_triton) %>%
+    summarise(
+      expected_n = unique(expected_n)
+    ) %>%
+    group_by(team_id) %>%
+    summarise(
+      sum_ns = sum(expected_n, na.rm = T)
+    )
+
+  team_expected_n <- buff_df$sum_ns[buff_df$team_id == team_id]
+
+  ru_expected_n <- particip_summary_input_df$expected_n[
+    particip_summary_input_df$reporting_unit_id_triton == reporting_unit_id_triton] %>% unique
+
+
+  participation_table_df <-  particip_summary_input_df %>%
+    select(week_start, team_id, reporting_unit_id_triton) %>%
+    melt(., id.vars = c("week_start")) %>%
+    filter(value == team_id | value == reporting_unit_id_triton) %>%
+    group_by(week_start, variable) %>%
+    summarise(
+      count_ = n()
+    ) %>%
+    dcast(variable ~ week_start) %>%
+    as.data.frame()
+
+  # insert missing weeks
+  present_weeks <- colnames(participation_table_df)[2:ncol(participation_table_df)]
+
+  # add the last week in the database
+  present_weeks_and_max <- c(present_weeks, max(data_cat$week_start)) %>% unique()
+  all_weeks <- present_weeks_and_max %>% insert_missing_weeks()
+  weeks_to_insert <- all_weeks[!all_weeks %in% present_weeks]
+  for (week_ in weeks_to_insert) {
+    participation_table_df[,week_] <- NA
+  }
+  # sort column names in increasing order
+  if (ncol(participation_table_df) > 2) {
+      buff_df <- participation_table_df[,2:ncol(participation_table_df)]
+      buff_df <- buff_df[ , order(names(buff_df))]
+      participation_table_df[,2:ncol(participation_table_df)] <- buff_df
+      colnames(participation_table_df)[2:ncol(participation_table_df)] <- colnames(buff_df)
+      buff_df <- NULL
+  }
+
+
+  participation_table_df$variable <- participation_table_df$variable %>% as.character
+  participation_table_df$variable[
+    participation_table_df$variable == "team_id"] <- team_id
+  participation_table_df$variable[
+    participation_table_df$variable == "reporting_unit_id_triton"] <- reporting_unit_id
+
+  #move the team to be on the top of the table
+  participation_table_df$team <- FALSE
+  participation_table_df$team <- grepl(team_id, participation_table_df$variable)
+
+  participation_table_df<- participation_table_df%>%
+    arrange(-team) %>%
+    select(-team) %>%
+    rename(" " = variable) %>% # remove the title of the column
+    as.data.frame()
+  # replace NAs with 0s
+  participation_table_df[is.na(participation_table_df)] <- as.integer(0)
+
+  # shorten table names
+  colnames(participation_table_df)  <- colnames(participation_table_df) %>%
+    gsub("20[0-9]{2}-[0]*", " ", .)  %>%
+    gsub("-", "/", .)
+
+  # add percentages to the participation table
+  participation_table_df_perc <- participation_table_df
+
+  participation_table_df_perc[1,2:ncol(participation_table_df_perc)] <-
+    (100*(participation_table_df_perc[1,2:ncol(participation_table_df_perc)])
+     /team_expected_n) %>%
+    round(.,0)
+
+
+  if (!TEAM_ONLY) {
+    participation_table_df_perc[2,2:ncol(participation_table_df_perc)] <-
+      (100*(participation_table_df_perc[2,2:ncol(participation_table_df_perc)])
+       /ru_expected_n) %>%
+      round(.,0)
+  }
+
+
+  if (ncol(participation_table_df_perc) > 2) {
+    participation_table_df_perc[,2:ncol(participation_table_df_perc)]  <-
+      participation_table_df_perc[,2:ncol(participation_table_df_perc)] %>%
+      apply(., 2, function(x) as.character(x))
+  } else {
+    participation_table_df_perc[,2]  <-
+      participation_table_df_perc[,2] %>%
+      as.character()
+
+  }
+
+
+  if (ncol(participation_table_df_perc) > 2) {
+    participation_table_df_perc[,2:ncol(participation_table_df_perc)]  <-
+      participation_table_df_perc[,2:ncol(participation_table_df_perc)] %>%
+      apply(., 2, function(x) make_percentage(x))
+  } else {
+    participation_table_df_perc[,2]  <-
+      participation_table_df_perc[,2] %>%
+      make_percentage()
+  }
+
+
+  for (j in 2:ncol(participation_table_df)) {
+    if (!TEAM_ONLY){
+      participation_table_df[,j] <- paste(
+        participation_table_df[,j],
+        participation_table_df_perc[,j],
+        sep = "")
+    } else {
+      participation_table_df[,j] <- paste(
+        participation_table_df[,j],
+        participation_table_df_perc[1,j],
+        sep = "")
+    }
+
+  }
+
+
+  n_col_tbl <- ncol(participation_table_df)
+  if (n_col_tbl > (max_table_width +1)) {
+    selection_vect <- c(1, (n_col_tbl-max_table_width+1):n_col_tbl)
+    participation_table_df <- participation_table_df[,selection_vect]
+  }
+}
+
+# rename the empty column name
+names(participation_table_df)[names(participation_table_df) == " "] <- "Week of"
+
+#transpose participation table
+buff_df <- participation_table_df
+col_names <- buff_df[1,]
+col_names[1,] <- names(buff_df)
+buff_df <- rbind(col_names, buff_df)
+
+buff_df_t <- t(buff_df[,2:ncol(participation_table_df)])
+rownames(buff_df_t) <- NULL
+colnames(buff_df_t) <- buff_df[,1]
+
+# for some reason the classroom column is not masked when printing TEAM_ONLY reports
+# I'm nost sure why, I will have a tempory fix here.
+if(TEAM_ONLY & ncol(buff_df_t == 3)) {
+  buff_df_t <- buff_df_t[, c(1,2)]
+}
+
+
+participation_table_df <- buff_df_t %>% as.data.frame()
+
+
+##############################################################################
+# calculate the omnibus p
+# the probability of differences by group being nonrandomly distinct
+
+
+# double melted data (dm) allows for metric (value) ~ subset_feature
+datasets_melted$variable <- NULL
+datasets_melted$question_code <- NULL
+dm <- melt(datasets_melted,
+           id.vars=c("metric","week_start", "dataset","value", "good_range"),
+           value.name="subset"
+)
+dm <- dm[ dm$variable %in% SUBSETS, ]
+
+dm_with_p <- dm %>%
+    group_by( metric, week_start, dataset, variable) %>%
+    summarise(
+      #if you want to compare different p-values, uncomment the vars bellow
+      #The correlation between different p-values is about .7
+      #p_chi=p_chi_sq(good_range, subset),
+      #p_log_reg=p_log_reg(good_range, subset),
+      #p_aov_cat=p_aov(good_range, subset),
+      #p=p_aov(value, subset)
+      p=p_chi_sq(good_range, subset))
+dm_with_p$subset_feature <- dm_with_p$variable
+
+ag_metric_with_p <- merge(
+    ag_metrics,
+    dm_with_p,
+    by=c("metric", "week_start", "dataset", "subset_feature"),
+    all.x=TRUE
+)
+
+##############################################################################
+#   Append Driver Information
+#
+
+# @ to=do, move this to the items-generator code in Dan's script
+# (i.e., should start with an items csv that has all the
+# required columns, rather than fixing it here!)
+items_renamed <- rename(items, metric=question_code)
+
+agm <- merge(
+    ag_metric_with_p,
+    items_renamed,
+    by="metric"
+)
+
+agm$grand_mean <- ifelse(agm$subset %in% "All Students","All Students","Subset")
+
+
+drivers_in_data <- agm$driver %>% unique
+undescribed_drivers <- drivers_in_data[ ! drivers_in_data %in% names(driver_desc)]
+present_drivers <- drivers_in_data[ drivers_in_data %in% names(driver_desc)]
+
+# remove drivers which are not used the most recent week
+# if for some reason we cannot find the most recent drivers (empty vector),
+# we display all we have. This should not be happening, but Chris said that some
+# updates of the database might fail
+
+if (length(most_recent_learning_cond) > 0) {
+  present_drivers <- present_drivers[present_drivers %in% most_recent_learning_cond]
+}
+
+agm$dataset <- factor(agm$dataset, c(team_id, reporting_unit_id))
+
+# add selective position of the star for the graphs
+gg_sign_star_str <-
+          'geom_text(
+              aes(y = max_pct_good, label = sign_star),
+              stat="summary",
+              fun.y="mean",
+              vjust = 0.3, #positive goes down in flipped bar graph (relative to bars)
+              hjust = 0.3, #positive goes left in flipped bar graph (relative to bars)
+              size = ug.text_size/2,
+              color = "black",
+              fontface="bold",
+              angle = 270
+           )'
+#for hjust # more negative goes further right
+
+triage_columns <- c("driver","dataset","pct_good","question_text","week_start")
+pre_triage <- agm[order(agm$week_start, decreasing = TRUE), triage_columns]
+pre_triage <-
+    pre_triage[ ! duplicated(pre_triage[,c("question_text","week_start")]), ]
+
+## Print out the driver graphs
+org_focus_populations <- c("Female")
+#From Rumen: I'm not removing the old code for focus population since we
+# might want to add them again later
+#focus_populations <- c("All Students", org_focus_populations)
+focus_populations <- c("All Students")
+plot_title_size <- 12
+panel_margin <- .2
+
+# set some factor levels for good graphing
+all_subsets <- agm$subset %>% unique
+all_subsets_ordered <- c("All Students", setdiff(all_subsets, "All Students"))
+agm$subset <- factor(agm$subset, all_subsets_ordered)
+agm$grand_mean <- factor(agm$grand_mean, c("All Students", "Subset"))
+
+
+new_basic_log <- data.frame()
+
+# These will hold the temporary file names of ggplot charts, so they can be
+# passed to the template during knitting. See the YAML block at the end of
+# this file.
+cross_section_charts <- list()
+timeline_charts <- list()
+
+for(driver in present_drivers){
+    # format the question and dataset labels
+
+
+    # driver_df is the subset of agm where the driver matches
+    # the driver we're iterating over, and the pct_good value is not NA
+    driver_df <- agm[agm$driver %in% driver &
+                         !is.na(agm$pct_good),]
+    if (nrow(driver_df) == 0){
+      cat("<br><br><b>Warning! No data to display.</b>")
+      next
+    }
+    # create human readable labels for graph axes and panels
+    driver_df$dates_measured_phrase <- driver_df$week_start
+    driver_df$dates_measured_phrase_full <- driver_df$week_start
+    driver_df$question_text_wrapped <- lapply(
+        driver_df$question_text,
+        function(x) wrap_text(x, width = 15) #original width was 25
+    ) %>%
+        unlist()
+    driver_df$dataset_wrapped <- driver_df$dataset %>%
+        format_reporting_units %>%
+        lapply(function(x) wrap_text(x, width = 15)) %>%
+        unlist
+
+    # combine weeks/questions with date ranges for time and bar graphs, respectively
+    driver_df$question_with_dates_wrapped <- driver_df$question_text %+% "\n" %>%
+        lapply(function(x) wrap_text(x, width = 19)) %>% unlist #original width was 25
+    driver_df$dataset_with_dates_wrapped <-
+      driver_df$dataset %+% "\n" %+% driver_df$dates_measured_phrase %>%
+      lapply(function(x) wrap_text(x, width = 10)) %>% unlist
+
+
+    # create factor levels to ensure that team results always
+    # get faceted above reporting unit results
+    factor_dataset_levels <- function(dataset_col, dataset_label_col){
+        levs <- data.frame(dataset_col, dataset_label_col) %>%
+            unique
+        team_levs <- levs[levs[,1] %in% team_id, 2] %>% as.character
+        ru_levs <- levs[levs[,1] %in% reporting_unit_id, 2] %>% as.character
+        factored_var <- factor(dataset_label_col, c(team_levs, ru_levs))
+        return(factored_var)
+    }
+
+    driver_df$dataset_wrapped <- factor_dataset_levels(
+        driver_df$dataset,
+        driver_df$dataset_wrapped
+    )
+
+
+    # make the most recent graph by population for each question
+    recent <- driver_df %>%
+        group_by(question_text) %>%
+        summarise( week_start=max(week_start) )
+
+    # I want to define the most recent data as the most
+    # recent week WITH VALID RESPONSES.
+    # driver_df_most_recent <- merge(driver_df, recent, by = c("question_text", "wave"), all = FALSE)
+    # From Rumen: I will override the selection of wave by question. Dave clarified that in the new design
+    # all questions will appear in each time period.
+    driver_df_most_recent <- driver_df [ driver_df$week_start %in% max(driver_df$week_start),]
+
+    ###################################
+    # add gray bars with NA when students are missing
+    # we will need to restructure the input database used by ggplot
+    # by inserting empty rows for the missing categories
+
+    # take Cartesian product
+    grid_df <- expand.grid(
+      "metric" =  unique(driver_df_most_recent$metric),
+      "dataset" = unique(driver_df_most_recent$dataset),
+      "subset" = all_subsets_orig)
+
+    driver_df_most_recent$imputed_row <- FALSE
+
+    grid_df <- merge(
+      grid_df,
+      driver_df_most_recent,
+      by = c("metric", "dataset", "subset"),
+      all = TRUE)
+
+    grid_df$imputed_row[is.na(grid_df$imputed_row)] <- TRUE
+
+    grid_df <- replace_missing(
+      in_df = grid_df,
+      shared_col = "metric",
+      cols_to_fill_in = c(
+        "question_with_dates_wrapped",
+        "question_text_wrapped",
+        "question_text",
+        "week_start")
+    )
+
+    grid_df <- replace_missing(
+      in_df = grid_df,
+      shared_col = "dataset",
+      cols_to_fill_in = c(
+        "dataset_wrapped",
+        "dataset_with_dates_wrapped",
+        "dates_measured_phrase_full")
+    )
+
+    grid_df <- replace_missing(
+      in_df = grid_df,
+      shared_col = "subset",
+      cols_to_fill_in = c(
+        "subset_feature")
+    )
+
+    # add pct good, grand mean, text to display
+    grid_df$grand_mean[grid_df$imputed_row] <- "All Students"
+
+    grid_df$comb_id <- paste(
+      grid_df$metric,
+      grid_df$dataset,
+      grid_df$grand_mean,
+      sep = "_"
+    )
+
+    # replace missing pct_good with those from the overall mean
+    # for each corresponding group and subgroup
+    grid_df <- replace_missing(
+      in_df = grid_df,
+      shared_col = "comb_id",
+      cols_to_fill_in = c("pct_good"),
+      diverse_vals = TRUE
+    )
+
+
+
+    grid_df$text_bar <- (100*grid_df$pct_good) %>%
+      round(.,0) %>%
+      paste(.,"%",sep = "")
+
+    # supress printing percentages lower than 10%, there is no room in the bars
+    grid_df$text_bar[grid_df$pct_good < .10] <- ""
+
+    grid_df$text_bar[grid_df$imputed_row] <-"n/a"
+
+
+    levels(grid_df$grand_mean) <- c(levels(grid_df$grand_mean),"Imputed")
+    grid_df$grand_mean[grid_df$imputed_row] <- "Imputed"
+
+
+        # Masking present values
+    # For categories where only one level is still present as non-missing (e.g. Female),
+    # replace its values with the the values from the counterpart level (e.g. Male)
+    # Previously, we have removed counterparts levels when n < 5. After imputation, however,
+    # it is possible to have both cells n>5, yet one of the groups have only NAs, resulting in
+    # displaying only one of the levels. Since we decided never to have a situation where
+    # only one level is displayed, here I'm maksing the row with existing data.
+
+    grid_df$comb_id <- paste(
+      grid_df$metric,
+      grid_df$dataset,
+      grid_df$subset_feature,
+      sep = "_"
+    )
+
+    count_nas <- grid_df %>%
+      group_by(comb_id) %>%
+      summarise(
+        is_na = sum(is.na(n)),
+        is_not_na = sum(!is.na(n))
+      )
+    # chose those subset_features, where one level is na, while the other is not na
+    rows_to_change <- count_nas[count_nas$is_na == 1 & count_nas$is_not_na == 1,"comb_id"] %>%
+      unlist %>% unname
+
+    # the values in the vars below will be used to replace the present row values
+    # with the missing row values (yes, the present will become missing)
+    vars_to_replace <- c("text_bar", "pct_good", "grand_mean")
+
+    for (row_ in rows_to_change) {
+      present_row_df <- grid_df[grid_df$comb_id == row_ & !is.na(grid_df$n),]
+      missing_row_df <- grid_df[grid_df$comb_id == row_ & is.na(grid_df$n),]
+      present_row_df[, vars_to_replace] <- missing_row_df[, vars_to_replace]
+      grid_df[grid_df$comb_id == row_ & !is.na(grid_df$n),] <- present_row_df
+    }
+
+    grid_df$comb_id <-NULL
+    # end of masking present values
+    ######################################
+
+
+    driver_df_most_recent <- grid_df
+    grid_df <- NULL
+    ######################################
+    # add significance stars
+
+    # for each pair (e.g. male, female) it takes the highest value
+    # which later is used to determine height of the text entry
+    max_df <- driver_df_most_recent %>%
+      group_by(dataset, metric, subset_feature) %>%
+      summarise(
+        max_pct_good = max(pct_good, na.rm = TRUE)
+      )
+
+    driver_df_most_recent <- merge(
+      driver_df_most_recent,
+      max_df,
+      by = c("dataset", "metric", "subset_feature"),
+      all.x = TRUE,
+      all.y = FALSE
+    )
+
+    driver_df_most_recent$p_aux <- driver_df_most_recent$p
+    driver_df_most_recent$p_aux[
+      is.na(driver_df_most_recent$p_aux)] <- 1.0
+    
+
+    driver_df_most_recent$sign_star <- ''
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$p_aux <.05] <- '  *'
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$p_aux <.01] <- ' **'
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$p_aux <.001] <- '***'
+
+    excluded_labels <- c("All Students", "Male", "White & Asian","Eng. Speaker")
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$subset %in% excluded_labels] <- ''
+
+    driver_df_most_recent$p_aux <- NULL
+    max_df <- NULL
+
+
+
+
+    #######################################
+
+    # make sure no extra panels got added
+    unique_recent_question_levels <-
+      driver_df_most_recent$question_with_dates_wrapped %>% unique
+    unique_questions <- driver_df$metric %>% unique %>% as.character()
+    if(length(unique_recent_question_levels) > length(unique_questions)){
+        util.warn(driver %+% " driver in " %+% report_name %+% " plotted " %+%
+                      paste0(gsub("\n", " ", unique_recent_question_levels), collapse = "............ ") %+%
+                      "as panels, which is too many. There should only be " %+%
+                      length(unique_questions) %+% ".")
+    }
+
+    # order the appearance of the separate levels for gender and race
+
+
+    driver_df_most_recent$subset <- driver_df_most_recent$subset %>%
+      factor(
+        levels = all_subsets_orig
+      )
+
+    # order questions by their code in the items table
+    buff_df <- driver_df_most_recent[,c("metric", "question_text_wrapped")]
+    buff_df <- buff_df[!duplicated(buff_df),] %>% arrange(metric)
+    ordered_questions <- buff_df$question_text_wrapped
+    buff_df <- NULL
+
+    driver_df_most_recent$question_text_wrapped <-
+      driver_df_most_recent$question_text_wrapped %>%
+      factor(
+        levels = ordered_questions
+      )
+
+
+
+
+    # set graph colors
+    colors_ <- c("#0a5894","#3faeeb", "#d0d0d0")
+    shapes <- c(1,4) #(14,2)
+
+    # if both demographic categories are "n/a", set the colors to two only
+    present_gm_levels <- driver_df_most_recent$grand_mean %>% as.character %>% unique
+    if (all(present_gm_levels == c("All Students", "Imputed"))) {
+       colors_ <- c("#0a5894","#d0d0d0", "#d0d0d0")
+    }
+
+    driver_cross_section <-
+        ggplot(driver_df_most_recent,
+                aes( subset, pct_good, fill=grand_mean, color=grand_mean )
+        ) +
+        #scale_x_discrete( limits=subset_no_all ) +
+        geom_bar(
+            stat="summary",
+            fun.y="mean",
+            width = 0.75
+        ) +
+        scale_fill_manual(
+            breaks=c("All","Subset"),
+            label=c("Control","Treatment"), # override condition names
+            values= colors_ ,
+            guide="none"
+        ) +
+        scale_colour_manual(
+            guide="none", # removes the color guide
+            values= colors_
+        ) +
+        geom_text(
+              aes(label = text_bar),
+              stat="summary",
+              fun.y="mean",
+              vjust = 0.3, #positive goes down in flipped bar graph (relative to bars)
+              hjust = 1.05, #positive goes left in flipped bar graph (relative to bars)
+              size = ug.text_size/3,
+              color = "white",
+              fontface="bold") +
+        # add sign stars
+        eval(parse(text=gg_sign_star_str)) +
+        facet_grid( question_text_wrapped ~ dataset_wrapped) +
+        scale_y_continuous(
+          breaks = c(0,0.5,1.0),
+          labels=percent, expand = c(.1, 0)) +
+        theme(
+            legend.key=element_rect(color="black", size=ug.text_size),
+            #axis.text=element_text(face="bold", size=ug.text_size ),
+            axis.text.x=element_text(
+                face="bold",
+                size=ug.text_size,
+                angle=270,
+                hjust=0),
+            axis.title=element_text(face="bold"),
+            panel.background    = element_blank() ,
+            #   make the major gridlines light gray and thin
+            panel.grid.major.y  = element_line( size=ug.line_size, colour="#C0C0C0" ),
+            #   suppress the vertical grid lines
+            panel.grid.major.x  = element_blank() ,
+            #   suppress the minor grid lines
+            panel.grid.minor    = element_blank() ,
+            #   adjust the axis ticks
+            axis.ticks    = element_line( size=ug.line_size , colour="black" ),
+            #   move the y-axis over to the left
+            axis.title.x  =
+                element_text( vjust=-.5 ,
+                              face="bold",
+                              color="black",
+                              angle=0,
+                              size=ug.text_size ) ,
+            axis.text =
+                element_text( vjust=0 , face="bold",
+                              color="black", angle=0,
+                              size=ug.text_size ) ,
+            axis.title.y =
+                element_text( vjust=.2 , color="black", angle=90, size=ug.text_size ) ,
+            plot.title = element_text(
+                colour="black",
+                size=plot_title_size,
+                face="bold",
+                hjust=0,
+                vjust = 0),
+            plot.margin = unit(c(0,0,0,0), "cm"),
+            panel.margin = unit(panel_margin, "in")
+        ) + #theme(strip.switch.pad.grid = unit(5, "cm")) +
+        theme(strip.text.y = element_text(angle=0)) +
+        xlab("") + ylab("") +
+        coord_cartesian(ylim=c(0,1)) + coord_flip()
+
+    # Save plot to a temporary file so we can pass it to the template.
+    # Record the file name we use for later reference.
+    cross_section_charts[[driver]] <- driver %+% '_cross_section.png'
+    ggsave(cross_section_charts[[driver]],width = 5, height = 5, dpi = 150, units = "in")
+
+    # only print the plot over time IFF there is more than one
+    # week's worth of non-NA data!
+    n_weeks <- driver_df[driver_df$subset %in% focus_populations &
+                             !is.na(driver_df$pct_good), "week_start" ] %>%
+        unique %>%
+        length
+
+    # @to-do: make the facets work when only 1 facet of data exists
+
+
+    if(n_weeks > 1){
+        # filter out any questions within the driver that have only
+        # one week of data available
+        exclude_qs <- recent$question_text[recent$week_start %in% 1]
+        driver_df_time <- driver_df[!driver_df$question_text %in% exclude_qs, ]
+
+        # define the order of dates before shortening them
+        levels_ <- driver_df_time$dates_measured_phrase %>% unique %>%
+          sort %>%
+          gsub("20[0-9]{2}-[0]*", "", .) %>%
+          gsub("-", "/", .)
+
+        # shorten dates
+        driver_df_time$dates_measured_phrase <-
+          gsub("20[0-9]{2}-[0]*", "", driver_df_time$dates_measured_phrase) %>%
+          gsub("-", "/", .)
+
+        # define order
+        driver_df_time$dates_measured_phrase <-
+          factor(driver_df_time$dates_measured_phrase,
+                    levels = levels_)
+
+        # if the graph has too many time points, display only the most recent weeks
+        driver_df_time$week_start_ord <- driver_df_time$week_start %>%
+          compute_ordinal() %>%
+          as.numeric
+
+        if (max(driver_df_time$week_start_ord) > max_time_chart_width) {
+          cut_off_week <- max(driver_df_time$week_start_ord) - max_time_chart_width
+          driver_df_time <-
+            driver_df_time[driver_df_time$week_start_ord > cut_off_week, ]
+        }
+        driver_df_time$week_start_ord <- NULL
+
+
+        # order questions by their code in the items table
+        driver_df_time$question_text_wrapped <-
+          driver_df_time$question_text_wrapped %>%
+          factor(
+            levels = ordered_questions # this is the same order used in the bar graphs
+          )
+
+
+        driver_time <-
+            ggplot( driver_df_time[driver_df_time$subset %in% focus_populations,],
+                    aes( dates_measured_phrase,
+                         pct_good,
+                         group=subset,
+                         shape=subset,
+                         linetype=subset )
+            ) +
+            geom_path(
+                stat="summary", fun.y="mean", color="#0a5894"
+            ) +
+            geom_point(aes(size = (1-pct_imputed)/7),
+                stat="summary", fun.y="mean", color="#0a5894"
+            )  +
+            scale_size_continuous(limits = c(0, 1)) +
+            facet_grid( question_text_wrapped ~ dataset_wrapped) +
+            scale_y_continuous( labels=percent) +
+            theme(
+                # legend.key=element_rect(color="black",size=.5),
+                #axis.text=element_text(face="bold", size=ug.text_size ),
+                axis.text.x=element_text(face="bold", angle=270),
+                axis.title=element_text(face="bold"),
+                legend.position="bottom",
+                legend.key = element_blank(),
+                plot.title = element_text(
+                    colour="black", size=plot_title_size, face="bold", hjust=0),
+                panel.background    = element_blank() ,
+                #   make the major gridlines light gray and thin
+                panel.grid.major.y  = element_line( size=ug.line_size, colour="#C0C0C0" ),
+                #   suppress the vertical grid lines
+                panel.grid.major.x  = element_blank() ,
+                #   suppress the minor grid lines
+                panel.grid.minor    = element_blank() ,
+                #   adjust the axis ticks
+                axis.ticks    = element_line( size=ug.line_size , colour="black" ),
+                #   move the y-axis over to the left
+                axis.title.x  =
+                    element_text( vjust=-.5, color="black", angle=0, size=ug.text_size ) ,
+                axis.text =
+                    element_text( vjust=0, color="black", angle=0, size=ug.text_size ) ,
+                axis.title.y =
+                    element_text( vjust=.2, color="black", angle=90, size=ug.text_size ),
+                plot.margin = unit(c(0,0,0,0), "cm"),
+                panel.margin = unit(panel_margin, "in")
+            ) +
+            xlab("") + ylab("") +
+            scale_shape( guide_legend(title = "Focus Population") ) +
+            scale_linetype( guide="none" ) +
+            ggtitle("") +
+            coord_cartesian(ylim=c(0,1)) +
+          theme(strip.text.y = element_text(angle=0)) +
+          theme(legend.position = "none") # I use this to supress all legends
+
+        # Save plot to a temporary file so we can pass it to the template.
+        # Record the file name we use for later reference.
+        timeline_charts[[driver]] <- driver %+% '_timeline.png'
+        ggsave(timeline_charts[[driver]],width = 5, height = 5, dpi = 150, units = "in")
+
+    } else {
+      # Don't display a timeline chart in this case.
+      timeline_charts[[driver]] <- NA
+    }
+
+    date_range <- driver_df_most_recent$dates_measured_phrase_full %>% unique()
+    if (length(date_range) > 1) {
+      # if date range has multiple values, warn, and take the first one
+      # you can consider stopping the scirpt too
+      util.warn("Date range has more than one value" %+% paste(date_range, sep = " "))
+      date_range <- date_range[1]
+    }
+
+    #update log files
+    buff_df <- driver_df_most_recent[, c("dataset", "subset", "n")]
+    buff_df <- buff_df[!duplicated(buff_df),] %>%
+      dcast(dataset ~ subset )
+    new_basic_log <- bind_rows(
+      new_basic_log,
+      buff_df
+    )
+
+
+    #new_basic_log$team <- team_id
+    #new_detailed_log$team <- team_id
+    #detailed_log <- bind_rows(detailed_log, new_detailed_log)
+    #basic_log <- bind_rows(basic_log, new_basic_log)
+    basic_log$team_only[basic_log$code == code] <- TEAM_ONLY
+
+
+    # print the response options in the "good" range
+    # for the driver in question
+    response_options_string <- driver_df$response_options %>%
+        unique
+    response_options <- strsplit(response_options_string, ";")[[1]] %>%
+        util.trim
+    min_good <- driver_df$min_good %>% unique
+    max_good <- driver_df$max_good %>% unique
+    good_response_options <- response_options[min_good:max_good]
+    bad_response_options <- setdiff(response_options, good_response_options)
+
+}
+
+#update basic_log
+new_basic_log <- new_basic_log[!duplicated(new_basic_log),]
+colnames <- setdiff(names(new_basic_log), "dataset")
+
+# allow team level data to be updated too, if for some reason we save team level information
+for (dataset in new_basic_log$dataset){
+  basic_log[basic_log$reporting_unit_id ==  dataset & basic_log$code == code, colnames] <-
+     new_basic_log[new_basic_log$dataset ==  dataset, colnames]
+}
+new_basic_log <- data.frame()
+basic_log$most_recent_week_n[basic_log$code == code]  <-
+  participation_table_df[nrow(participation_table_df), ncol(participation_table_df)]
+
+
+# original css: https://raw.githubusercontent.com/PERTS/gymnast/master/Rmd/rmd_styles.css
+# return the original form of TEAM_ONLY, in case it has been changed in the Rmd
+#TEAM_ONLY <- orig_TEAM_ONLY
+
+# if unit and team names were changed, undo it
+
+if (ANONYMOUS) {
+  data_cat$team_id[data_cat$team_id %in% team_id] <- team_id_unhashed
+  data_cat$reporting_unit_id[data_cat$reporting_unit_id %in% reporting_unit_id] <-
+    reporting_unit_id_unhashed
+  data_cat_not_imputed$team_id[data_cat_not_imputed$team_id %in% team_id] <- team_id_unhashed
+  data_cat_not_imputed$reporting_unit_id[data_cat_not_imputed$reporting_unit_id %in% reporting_unit_id] <-
+    reporting_unit_id_unhashed
+
+  team_id <- team_id_unhashed
+  reporting_unit_id <- reporting_unit_id_unhashed
+}
+
+# adjust text if team only report
+page_title <- reporting_unit_id
+if (TEAM_ONLY) {
+  reporting_unit_title <- ""
+  page_title <- team_id
+}
+
+# if you want to record the objects passed to the html template uncomment this section
+# source(RMD_BASE_PATH %+% "/html_tmpl_object_log.R")
+```
+
+---
+page_title: `r page_title`
+report_date: `r paste0(months(date(REPORT_DATE))," ",day(date(REPORT_DATE)), ", ",year(date(REPORT_DATE)))`
+team_name: `r team_title`
+team_id: `r team_id_triton`
+classroom_name: `r reporting_unit_title`
+classroom_id: `r reporting_unit_id_triton`
+classroom_id_url: `r gsub("Classroom_", "", reporting_unit_id_triton)`
+zero_length_table: `r zero_length_table`
+max_weeks_missing: `r max_weeks_missing`
+participation_table_html: `r gsub("\n", "", util.html_table_data_frame(participation_table_df, print.results = FALSE))`
+learning_condition:
+  - active: `r 'feedback_for_growth' %in% present_drivers`
+    timeline_active: `r !is.na(timeline_charts[['feedback_for_growth']])`
+    name: `r driver_desc[['feedback_for_growth']]$name`
+    name_sent_case: `r driver_desc[['feedback_for_growth']]$name_sent_case`
+    name_title_case: `r driver_desc[['feedback_for_growth']]$name_title_case`
+    description: `r driver_desc[['feedback_for_growth']]$description`
+    graphic_url: `r image_paths[['feedback_for_growth']]`
+    timeline_chart: `r timeline_charts[['feedback_for_growth']]`
+    bar_chart: `r cross_section_charts[['feedback_for_growth']]`
+  - active: `r 'meaningful_work' %in% present_drivers`
+    timeline_active: `r !is.na(timeline_charts[['meaningful_work']])`
+    name: `r driver_desc[['meaningful_work']]$name`
+    name_sent_case: `r driver_desc[['meaningful_work']]$name_sent_case`
+    name_title_case: `r driver_desc[['meaningful_work']]$name_title_case`
+    description: `r driver_desc[['meaningful_work']]$description`
+    graphic_url: `r image_paths[['meaningful_work']]`
+    timeline_chart: `r timeline_charts[['meaningful_work']]`
+    bar_chart: `r cross_section_charts[['meaningful_work']]`
+  - active: `r 'teacher_caring' %in% present_drivers`
+    timeline_active: `r !is.na(timeline_charts[['teacher_caring']])`
+    name: `r driver_desc[['teacher_caring']]$name`
+    name_sent_case: `r driver_desc[['teacher_caring']]$name_sent_case`
+    name_title_case: `r driver_desc[['teacher_caring']]$name_title_case`
+    description: `r driver_desc[['teacher_caring']]$description`
+    graphic_url: `r image_paths[['teacher_caring']]`
+    timeline_chart: `r timeline_charts[['teacher_caring']]`
+    bar_chart: `r cross_section_charts[['teacher_caring']]`
+---

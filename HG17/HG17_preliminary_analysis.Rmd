@@ -1,0 +1,909 @@
+---
+title: "HG17 prelimiinary analysis (internal)"
+author: "Sarah Gripshover"
+date: "May 2017"
+output: 
+  html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: ~/Sites/gymnast/Rmd/RMD_styles.css
+    template: ~/Sites/perts_analyses/common/jurassic.html    
+---
+
+```{r results='asis', echo = FALSE}
+
+# [CODING STYLE GUIDE HERE: http://adv-r.had.co.nz/Style.html]
+# 
+# # Introduction
+# 
+# [DESCRIBE THE PURPOSE AND CONTENT OF THIS DOCUMENT]
+# 
+# ## Input Files
+# 
+# [LIST AND DESCRIBE ALL FILES THAT ARE READ INTO THIS SCRIPT]
+# 
+# ## Output Files
+# 
+# [LIST AND DESCRIBE ALL FILES THAT ARE WRITTEN FROM THIS SCRIPT]
+# 
+# 
+# # Setting the environment
+# 
+# ## Set constants
+# [SET GLOBAL PATH VARIABLES BELOW; 
+# E.G., CRYPT FOLDER, PROCESSED DATA FOLDER, ETC.
+# CONSTANTS SHOULD BE IN ALL CAPS]
+
+```
+
+
+
+
+```{r results='asis', message=FALSE, warning=FALSE, echo = FALSE}
+PRINT_CODE <- FALSE # since this is an internal report, let's see the code
+
+# source gymnast functions
+tryCatch({
+    source("~/Sites/gymnast/R/util.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_graphing.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_scale_computation.R", chdir = TRUE)
+}, error = function(e){
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_legacy.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_qualtrics_cleaning.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_graphing.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/scale_computation.R")
+})
+
+# source any additional packages that are NOT loaded in gymnast
+library("tidyr")
+
+
+# set stringsAsFactors to FALSE, and add any other global R settings
+options(stringsAsFactors = FALSE)
+
+# set results to 'asis' for all chunks
+# (can also add any global rmarkdown settings here)
+opts_chunk$set(results = 'asis')
+
+
+if(!PRINT_CODE){
+    opts_chunk$set(echo = FALSE)
+    opts_chunk$set(message = FALSE)
+    opts_chunk$set(warning = FALSE)
+}
+```
+
+
+
+```{r}
+
+# ## Local helper functions
+# MAKE SURE TO 
+# CONTRIBUTE ANY GOOD ONES TO the [Miscellaneous Code Archive](https://docs.google.com/document/d/10_K8clWHUQIbO5BWXViiZBXMbRDkni7ypuBJ54l_KWE/edit) 
+read_all_qualtrics <- function(complete_file_name, partial_file_name){
+
+    complete_raw <- util.find_crypt_paths(list(f1 = complete_file_name)) %>%
+        unlist %>%
+        read.csv %>%
+        qc.clean_qualtrics() # note you will get a warning about duplicate columns, see (1) above
+    
+    partial_raw <- util.find_crypt_paths(list(p1 = partial_file_name)) %>%
+        unlist %>%
+        read.csv
+    
+    raw <- qc.rbind_inprogress(partial_raw, complete_raw)
+    return(raw)
+}
+
+mark_qualtrics_dups <- function(clean_qdf, id_vars, min_secs = 120){
+    # 1. Mark all rows where time on task < min_secs (remove_too_short)
+    # 2. Identify id_vars that are still duplicated
+    # 3. Mark all records corresponding to the still-duplicated IDs for removal (remove_duplicated)
+    clean_qdf %>%
+        mutate(remove_too_quick = difftime(EndDate, StartDate) < min_secs) %>%
+        group_by_(.dots = id_vars) %>%
+        mutate(
+            id_instances = n(),
+            remove_duplicated = id_instances > 1
+        )
+}
+
+check_index_is_unique <- function(df, index_cols = NULL){
+    # Checks whether the vector of column names index_cols define 
+    # unique rows in df by comparing the number of rows in the whole df
+    # to the number of rows defined by just the unique combinations of the 
+    # index_cols. Returns boolean if throw_error is FALSE, otherwise simply
+    # throws an error if the check fails.
+    
+    # if no index cols are specified, then check whether the whole df is unique
+    if(is.null(index_cols)){
+        index_cols <- names(df)
+    }
+    
+    # Throw an error if df is missing any index_cols
+    if(any(!index_cols %in% names(df))){
+        stop("in check_index_is_unique, one of your index cols does not exist in df.")
+    }
+    
+    nrows_index_cols <- df %>%
+        select(one_of(index_cols)) %>%
+        unique %>%
+        nrow
+    
+    nrows_whole_df <- nrow(df)
+    
+    return(nrows_index_cols == nrows_whole_df)
+}
+
+print_item_text <- function(scale, scale_items_df){
+    item_text <- scale_items_df[scale_items_df$scale %in% scale, "question_text"]
+    paste0(item_text, collapse = "<br>")
+}
+
+wrap_text <- function(text, width=35) {
+    wtext <- paste( strwrap(text,width=width), collapse=" \n ")
+    return(wtext)
+}
+
+p_aov <- function(dv, iv){
+    # provided an iv and dv, return the omnibus p from an anova
+    tryCatch({
+        summary(aov(dv ~ iv))[[1]][["Pr(>F)"]][1]    
+    }, error = function(e){
+        return(1)
+    })
+}
+```
+
+
+
+```{r}
+
+# # Data Preparation
+# 
+# ## Load data
+
+# The only data for HG17 are the s1 and s2 surveys. There are two "weird"
+# things to note about the survey data:
+
+# 1. The two fms questions were saved as embedded data fields to 
+# send the data back to Neptune. Therefore, there are TWO columns 
+# labeled fms_1 and fms_2 in the exported data file. The first is 
+# the embedded column and the second is the question itself. It doesn't 
+# matter which one you use, since they have the same data, just delete 
+# one of them.
+
+# 2. The "race" questions allowed multiple checkbox responses, which means 
+# they get automatically dummy-coded in the exported file. So, that's just 
+# a bit of a non-standard column cleaning procedure.
+
+s1_raw <- read_all_qualtrics(
+    "HG17_Session_1_OFFICIAL.csv",
+    "HG17_Session_1_OFFICIAL-Responses in Progress.csv"
+)
+
+s2_raw <- read_all_qualtrics(
+    "HG17_Session_2_OFFICIAL.csv",
+    "HG17_Session_2_OFFICIAL-Responses in Progress.csv"
+)
+
+
+# Participant/Org/Cohort table:
+# Note that this table was made by Dan Fiore on May 8, 2017.
+# It is needed because cohort/org information was not passed to the survey.
+# SG has recommended that future surveys store cohort/org info from the platform
+# so that this step is not necessary.
+
+p_raw <- util.find_crypt_paths(list(p = "HG17_participant-org-cohort-table.csv")) %>%
+    unlist %>%
+    read.csv
+
+# source the salt
+util.find_crypt_paths(list(salt = "HG17_salt.R")) %>%
+    unlist %>% 
+    source
+
+# race key
+race_key <- util.find_crypt_paths(list(race_key = "HG17_race_key.csv")) %>%
+    unlist %>%
+    read.csv
+
+scale_descriptions <- util.find_crypt_paths(list(sd = "HG17_scale_descriptions.csv")) %>%
+    unlist %>% read.csv
+```
+
+```{r}
+#### Create items guide
+
+# items <- names(d)[
+#     !grepl("time_", names(d)) &
+#     !grepl("t[1-2]{1}", names(d)) &
+#     !names(d) %in% "participant_id"
+# ]
+# 
+# max_vals <- util.apply_columns(d[items], fun = function(x) max(x, na.rm = TRUE))
+# items_stripped <- gsub("__s[1-2]{1}", "", items)
+# 
+# scale_membership <- gsub("_[0-9]+$", "", items_stripped)
+# 
+# raw_surveys <- util.find_crypt_paths(
+#     list(s1 = "HG17_Session_1_OFFICIAL.csv", s2 = "HG17_Session_2_OFFICIAL.csv")
+# ) %>%
+#     util.read_csv_files() 
+# 
+# question_text <- lapply(raw_surveys, function(x) as.character(x[1,])) %>%
+#     unlist %>% unname
+# item_names <- lapply(raw_surveys, function(x) names(qc.clean_qualtrics(x))) 
+# item_names[[1]] <- paste0(item_names[[1]], "__s1")
+# item_names[[2]] <- paste0(item_names[[2]], "__s2")
+# item_names <- item_names %>% unlist %>% unname
+# 
+# question_text_df <- data.frame(item_names, question_text) %>%
+#     unique
+# 
+# items_df <- data.frame(
+#     var_name = items,
+#     scale = scale_membership,
+#     max_val = as.character(max_vals)
+# ) %>%
+#     # this last step is just in case questions used across surveys have different max values
+#     group_by(var_name) %>%
+#     mutate(max_val = max(max_val)) %>%
+#     unique %>%
+#     as.data.frame
+# 
+# # merge in question text
+# items_df_wqs <- merge(
+#     items_df,
+#     question_text_df,
+#     by.x = "var_name",
+#     by.y = "item_names",
+#     all.x = TRUE,
+#     all.y = FALSE
+# ) 
+# rm(items)
+
+# use the automatically created items guide as a base, and edit scale membership manually
+# write.csv(items_df_wqs, "/Volumes/NO NAME/HG17_items.csv", row.names = FALSE)
+
+# read in the manually-edited version
+items_path <- util.find_crypt_paths(list(items = "HG17_items_manually_checked.csv"))
+SCALES_COMPUTED <- FALSE
+if(file.exists(items_path$items)){
+    SCALES_COMPUTED <- TRUE
+    all_items <- read.csv(items_path$items)
+    scale_items <- all_items[!util.is_blank(all_items$scale), ]
+    # strip the pdd tags from the question text
+    scale_items$question_text <- gsub("__pdd__[0-9a-zA-Z_-]*__pdd__", "", scale_items$question_text)
+    scale_items$question_text <- gsub('Survey Section Go Back ', "", scale_items$question_text)
+}
+
+
+```
+
+
+```{r}
+
+# ## Pre-process datasets
+# 
+# [USE THIS SECTION FOR CLEANING OPERATIONS INVOLVING INDIVIDUAL DATA FRAMES]
+# 
+# ### De-identify
+
+# loop through d_raw and:
+# - Hash all id variables with the salt
+# - Remove all non-whitelisted variables with uniqueness above a certain threshold
+
+# d_di is a list of de-identified data.frames
+
+# here you can save a hash/id table in the crypt folder, too. This can be useful 
+# for error checking.
+
+# for now, don't de-identify:
+s1_di <- s1_raw 
+s2_di <- s2_raw
+```
+
+
+
+```{r}
+
+### Clean columns
+
+#### Standardize column names
+
+# remove the embedded data versions of the fms variables
+# doesn't matter which one so just remove the first.
+fms1_index1 <- which(names(s1_di) %in% "fms_1")[1]
+fms2_index1 <- which(names(s1_di) %in% "fms_2")[1]
+
+s1_rn <- s1_di[-c(fms1_index1, fms2_index1)]
+s2_rn <- s2_di
+```
+
+
+
+```{r}
+#### Standardize column values
+# 
+# * any variable recoding (ideally using a key file)
+# * includes grade recoding with `glk` if applicable
+
+# recode the race values:
+race_cols <- c(
+    "race_1",
+    "race_2",
+    "race_3",
+    "race_4",
+    "race_5",
+    "race_6",
+    "race_7",
+    "race_8"
+)
+
+# the or_race_cols have x in them for some reason, so add that
+or_race_cols <- paste0("or_", race_cols) %>%
+    gsub("_([0-9]+)", "_x\\1", .)
+
+# first, replace numeric column suffixes with readable machine label suffixes
+new_race_cols <- util.recode(
+    names(s1_rn)[names(s1_rn) %in% race_cols],
+    race_cols,
+    paste0("race_", race_key$machine_label)
+)
+names(s1_rn)[names(s1_rn) %in% race_cols] <- new_race_cols
+
+new_or_race_cols <- util.recode(
+    names(s1_rn)[names(s1_rn) %in% or_race_cols],
+    or_race_cols,
+    paste0("or_race_", race_key$machine_label)
+)
+names(s1_rn)[names(s1_rn) %in% or_race_cols] <- new_or_race_cols
+# next, create a categorical column.
+# whenever somebody specified JUST ONE primary race, use that.
+# otherwise code "other/mixed"
+
+# only compute race categorical if hasn't been computed yet
+if(all(is.na(s1_rn$race_cat)) | is.null(s1_rn$race_cat)){
+    s1_rn$race_cat <- NA
+    s1_rn$num_races_listed <- apply(
+        s1_rn[c(new_race_cols)],
+        1,
+        function(x) sum(!util.is_blank(x))
+    )
+    
+    # this is looking up the column name corresponding to the single non-NA value
+    s1_rn$race_cat[s1_rn$num_races_listed == 1] <- s1_rn[s1_rn$num_races_listed == 1, new_race_cols] %>% 
+        apply(., 1, function(x) return(gsub("race_", "", new_race_cols[which(!util.is_blank(x))])))
+    
+    # for people with > one race listed, see if they listed a single primary race
+    s1_rn$num_primary_races_listed <- apply(s1_rn[new_or_race_cols], 1, function(x) sum(!util.is_blank(x)))
+    
+    s1_rn$race_cat[s1_rn$num_primary_races_listed == 1] <- s1_rn[s1_rn$num_primary_races_listed == 1, new_or_race_cols] %>% 
+        apply(., 1, function(x) return(gsub("or_race_", "", new_or_race_cols[which(!util.is_blank(x))])))
+    
+    # if they listed more than one primary race, they are "Other"
+    s1_rn$race_cat[s1_rn$num_primary_races_listed > 1] <- "Other"
+    
+    # recode into advantaged race
+    s1_rn$race_advantaged <- util.recode(s1_rn$race_cat, race_key$machine_label, race_key$advantaged_race) %>%
+        as.logical
+}
+
+# finally, recode all other categorical vars
+categoricals <- all_items$var_name[all_items$categorical]
+categorical_vals <- all_items$recoded_values[all_items$categorical]
+for(i in 1:length(categoricals)){
+    column <- categoricals[i] %>% gsub("__s[1-2]{1}", "", .)
+    originals <- sort(unique(s1_rn[,column]))
+    new_values <- str_split(categorical_vals[i], "; ")[[1]]
+    s1_rn[[column %+% "_cat"]] <- util.recode(s1_rn[[column]], originals, new_values)
+}
+```
+
+
+
+```{r}
+
+### Clean rows
+
+#### Missing participant_ids indicate test data and should be removed
+s1_rc <- s1_rn %>%
+    mutate(remove_blank_ID = util.is_blank(participant_id)) %>%
+    mark_qualtrics_dups(id_vars = "participant_id")
+
+
+s2_rc <- s2_rn %>%
+    mutate(remove_blank_ID = util.is_blank(participant_id)) %>%
+    mark_qualtrics_dups(id_vars = "participant_id")
+
+s1_rcf <- s1_rc %>%
+    filter(!remove_blank_ID, !remove_too_quick, !remove_duplicated)
+
+s2_rcf <- s2_rc %>%
+    filter(!remove_blank_ID, !remove_too_quick, !remove_duplicated)
+
+# get rid of duplicate rows in the platform data
+
+p_rcf <- unique(p_raw)
+```
+
+
+
+```{r results = "hide"}
+
+# ### Conduct checks on the pre-processed data
+# 
+# #### Unique indexes
+# Make sure your indexes are unique (could use [check_index_is_unique](https://gist.github.com/sarahgripshover/3192e2ce1128bb5e79fc3edc2471d9eb)).
+
+if(!check_index_is_unique(s1_rcf, "participant_id")){
+    util.warn("Duplicate participants found in survey 1 data after duplicate handling. Investigate")
+}
+
+if(!check_index_is_unique(s2_rcf, "participant_id")){
+    util.warn("Duplicate participants found in survey 2 data after duplicate handling. Investigate")
+}
+ 
+# #### Expected numbers of rows
+
+nrow(s1_rcf) # 1016
+nrow(s2_rcf) # 475
+
+```
+
+
+
+
+```{r}
+## Merge survey data with a full join
+s1_rcf_suffixes <- setNames(s1_rcf, paste0(names(s1_rcf), "__s1"))
+names(s1_rcf_suffixes)[names(s1_rcf_suffixes) %in% "participant_id__s1"] <- "participant_id"
+
+s2_rcf_suffixes <- setNames(s2_rcf, paste0(names(s2_rcf), "__s2"))
+names(s2_rcf_suffixes)[names(s2_rcf_suffixes) %in% "participant_id__s2"] <- "participant_id"
+
+s <- merge(s1_rcf_suffixes, s2_rcf_suffixes, by = "participant_id", all = TRUE)
+d <- merge(s, p_rcf, by.x = "participant_id", by.y = "p_uid", all.x = TRUE, all.y = FALSE)
+
+if(nrow(s) != nrow(d)){
+    util.warn("Rows were added or dropped when merging survey with platform data.")
+}
+
+# filter out test data and data with no org name, and with too few participants (< 20)
+org_tab <- table(d$org_name)
+low_participation_orgs <- names(org_tab[org_tab < 20])
+
+d_f <- filter(
+    d,
+    !org_name %in% c("TestCrackers GMAT and GRE Prep", NA)
+)
+```
+
+
+```{r eval = SCALES_COMPUTED}
+# ds stands for d-scales
+ds <- sc.append_scales(d_f, scale_items)
+scales <- scale_items$scale[!util.is_blank(scale_items$scale)] %>%
+    unique
+
+scales_s1 <- scales[grepl("__s1", scales)]
+scales_s2 <- scales[grepl("__s2", scales)]
+
+```
+
+
+# Purpose of preliminary analysis
+
+The primary purpose of this data analysis for HG17 is to determine what content 
+should go in the school-facing reports. I will also save these 
+analyses for posterity, in case anyone ever wants to look at them.
+While there's already a [pretty good outline](https://docs.google.com/document/d/1qYfGvghrSIB3MMPMR2OowRymOvsLOgrATTSHskcsUtw/edit#)
+of what the report might look like, the framing of all analyses and 
+results depends a lot on what the actual numbers are. For example, 
+if we find a lot of predictable and important achievement gaps, 
+we might give that section more real estate. If we find zero program 
+impact, we'll want to explain that. Etc.
+
+A secondary purpose of the analysis is to learn internally about measures and program impact. 
+Which measures revealed achievement gaps? What happened to each mindset over time?
+I'd like to close the book on HG17 with a little bit of learning about measures, 
+the population we managed to recruit, and the pre/post results.
+
+# Analyses
+
+## Pre-process summaries and checks
+
+```{r}
+cat("<h4>Survey 1 summary of records removed during pre-processing:</h4>")
+s1_rc %>%
+    group_by(remove_blank_ID, remove_too_quick, remove_duplicated) %>%
+    filter(remove_blank_ID | remove_too_quick | remove_duplicated) %>%
+    summarise(n_records_removed = n()) %>%
+    util.html_table()
+
+cat("<h4>Survey 2 summary of records removed during pre-processing:</h4>")
+s2_rc %>%
+    group_by(remove_blank_ID, remove_too_quick, remove_duplicated) %>%
+    filter(remove_blank_ID | remove_too_quick | remove_duplicated) %>%
+    summarise(n_records_removed = n()) %>%
+    util.html_table()
+```
+
+## Scale alphas
+
+We want to know the scale alphas because some of the measures are quite new, and we just want to know the reliability on them for reference for future studies. If some scales have really low alphas, maybe we won't use them for e.g., CG17/CB17
+
+```{r eval = SCALES_COMPUTED}
+    
+for(scale in scales){
+    items <- scale_items$var_name[scale_items$scale %in% scale]
+    if(length(items) > 1){
+        alph <- psych::alpha(ds[items])
+        n_items <- length(items)
+        cat("<h5>Scale alphas for scale " %+% scale %+% " (" %+% n_items %+% " items) </h5>")
+        alph$total %>%
+            util.html_table()
+        if(alph$total$raw_alpha < .5){
+            util.warn("Low alpha for scale " %+% scale %+% ". <br><b>Item text:</b><br>" %+%
+                          print_item_text(scale, scale_items))
+        }
+    }
+}
+
+```
+
+### Narrative summary of scale alphas
+
+Only two scales have low alphas, and they are both from session 2 data.
+I'm not going to worry about these too much, because s2 doesn't have that many 
+participants yet.
+
+## Participation summary
+
+We want to take a peek at participation numbers to learn a couple of things:
+
++ Did any sites have especially low or high participation, both in raw numbers and percents of S1 participation?
++ What kind of min cell size do we want to use? (Is doubling up categories just a non-starter?)
+
+We care about this because we might want to highlight participation numbers in the reports in particular ways...e.g., if some sites did really well or really poorly, we might want to link to tips for getting better participation in the future. (Not that we'd do custom reports, but just say "here are the numbers" and link to "I'm not satisfied with participation levels at my site...what can I do better next time?")
+
+We also want to know from our internal learning, how well did schools do? This was our first stab at running a program on Neptune, how successful was it?
+
+So we'll look at participation...
+
++ By site
++ By demographic group
+
+```{r}
+# Participation summary
+participation_summary_df <- d %>%
+    select(participant_id, org_name, progress__s1, progress__s2) %>%
+    mutate(
+        participated__session_1 = !is.na(progress__s1),
+        participated__session_2 = !is.na(progress__s2),
+        participated__both = participated__session_1 & participated__session_2
+    ) %>%
+    select(participant_id, org_name, participated__session_1, participated__session_2, participated__both) %>%
+    melt(id.vars = c("participant_id", "org_name")) %>%
+    separate(variable, into = c("variable", "session"), sep = "__") %>%
+    mutate(session = factor(session, levels = c("session_1", "session_2", "both")))
+
+cat("<h4>Over-all participation summary</h4>")
+participation_summary_df %>%
+    group_by(session) %>%
+    summarise(n = sum(value)) %>%
+    util.html_table()
+
+cat("<h4>Participation by Site</h4>")
+participation_summary_df %>%
+    filter(!is.na(org_name)) %>%
+    group_by(org_name, session) %>%
+    summarise(n = sum(value)) %>%
+    dcast(org_name ~ session) %>%
+    util.html_table()
+```
+
+## Mindset achievement gaps
+
+The goal of this section is to determine whether there 
+are pre-intervention “mindset achievement gaps” in the HG17 population…
+
++ In the sample as a whole,
++ And at a site level
+
+This information is likely to be intrinsically interesting to schools, and it’s also useful to us in getting to know our population. But we want to screen these tables before presenting them to schools, again so that we can frame them properly. I think we want to highlight change ideas no matter what, but it could be useful to be sensitive to how pronounced any observed achievement gaps actually are.
+
+I also just want us to _know_ how these measures did. Which ones showed achievement gaps?
+
+### Omnibus tests
+
+```{r}
+ag_id_vars <- c("participant_id", "org_name")
+ag_subsets <- c("gender_cat__s1", "race_cat__s1", "race_advantaged__s1", "grades_1_cat__s1")
+dm <- melt(ds[c(ag_id_vars, ag_subsets, scales_s1)], id.vars = c(ag_id_vars, ag_subsets))
+disadvantaged_races <- unique(dm$race_cat__s1[!dm$race_advantaged__s1])
+disadvantaged_races <- disadvantaged_races[!util.is_blank(disadvantaged_races)]
+dm$race_cat__s1 <- factor(dm$race_cat__s1, c("W", "As", disadvantaged_races))
+dm$scale <- gsub("__s1", "", dm$variable)
+
+
+dm$scale_description <- util.recode(
+    as.character(dm$variable),
+    scale_descriptions$scale,
+    scale_descriptions$description
+) %>%
+    sapply(., function(x) wrap_text(x, 25))
+
+# univariate tests for each subset category
+omnibus_lmer <- function(df, iv_str, RE_str){
+    formul <- "value ~ " %+% iv_str %+% " + (1 | " %+% RE_str %+% ")"
+    model <- lmer(formul, data = df)
+    anov <- anova(model)
+    f <- anov[["F value"]]
+    return(f)
+}
+
+
+
+library("purrr")
+
+omnibus <- dm %>%
+    group_by(scale_description) %>%
+    nest() %>%
+    mutate(
+        race_f = round(unlist(map(data, function(df) omnibus_lmer(df, "race_cat__s1", "org_name"))), 3),
+        gender_f = round(unlist(map(data, function(df) omnibus_lmer(df, "gender_cat__s1", "org_name"))), 3),
+        race_adv_f = round(unlist(map(data, function(df) omnibus_lmer(df, "race_advantaged__s1", "org_name"))), 3),
+        grades_f = round(unlist(map(data, function(df) omnibus_lmer(df, "grades_1_cat__s1", "org_name"))), 3)
+    ) %>%
+    select(-data)
+
+cat("<h4>Omnibus f values for whole sample</h4>")
+cat("<p>Note: lmer models would not return p-values for F-statistics." %+%
+        "But consider F = 4 to be a reasonable significance threshold for " %+%
+        "gender and race_adv (which have just 1 df in the numerator) " %+%
+        "and F = 2 to be a good significance threshold for race, " %+%
+        "which has 7 df in the numerator.</p>")
+util.html_table(omnibus)
+
+```
+
+### Subset graphs
+
+#### Previous grades
+
+```{r fig.height=20}
+ggplot(dm, aes(grades_1_cat__s1, value, fill = grades_1_cat__s1)) +
+    geom_bar(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar +
+    facet_grid(scale_description ~ .) +
+    ug.ht +
+    xlab("") +
+    ylab("Scale Rating") +
+    theme(legend.position = "top")
+```
+
+#### Race
+
+```{r fig.height=20}
+# bar graphs for each subset category
+ggplot(dm, aes(race_cat__s1, value, fill = race_advantaged__s1)) +
+    geom_bar(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar +
+    facet_grid(scale_description ~ .) +
+    ug.ht +
+    xlab("") +
+    ylab("Scale Rating") +
+    theme(legend.position = "top")
+
+```
+
+#### Race (advantaged vs. disadvantaged)
+
+```{r, fig.height=20}
+# if number of orgs < 8, panel by org name; otherwise don't bother
+valid_orgs <- org_tab[org_tab > 20]
+if(length(valid_orgs) < 8){
+    dm$org_name_wrapped <- sapply(dm$org_name, function(x) wrap_text(x, 10))
+    ggplot(dm, aes(race_advantaged__s1, value, fill = race_advantaged__s1)) +
+        geom_bar(stat = "summary", fun.y = "mean") +
+        ug.se_error_bar +
+        facet_grid(scale_description ~ org_name_wrapped) +
+        ug.ht +
+        xlab("") +
+        ylab("Scale Rating") +
+        theme(legend.position = "top")
+} else{
+    ggplot(dm, aes(race_advantaged__s1, value, fill = race_advantaged__s1)) +
+        geom_bar(stat = "summary", fun.y = "mean") +
+        ug.se_error_bar +
+        facet_grid(scale_description ~ .) +
+        ug.ht +
+        xlab("") +
+        ylab("Scale Rating") +
+        theme(legend.position = "top")
+}
+```
+
+#### Gender
+
+```{r, fig.height=20, fig.width=5}
+
+ggplot(dm, aes(gender_cat__s1, value, fill = gender_cat__s1)) +
+    geom_bar(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar +
+    facet_grid(scale_description ~ .) +
+    ug.ht +
+    xlab("") +
+    ylab("Scale Rating") +
+    theme(legend.position = "top")
+```
+
+### Narrative summary of psychological profile of sample
+
++ **Gaps by previous grades.** Most of the psychometrics show nice linear effects by self-reported grades. Interestingly, fixed mindset beliefs seem to show more of a u-shaped relationship with previous grades: they are most prominent among kids earning C's and D's. Also, the kids reporting the most stress seem to be the ones earning C's and D's. So that's kind of interesting. Don't want to read too much into it yet with so little data, though.
++ **Gaps by gender.** Only a few items differed by gender: girls report being WAY more stressed than boys, and they also report slightly lower meaning in life.
++ **Gaps by race.** Several items seem to differ systematically by race, including having higher fixed mindset effort beliefs, lower high school expectancy, higher fixed mindset beliefs (but not math fixed mindset), lower school belonging, lower school climate (adults care), and lower trust in teachers. These race differences pop out much more strongly when advantaged vs. disadvantaged races are contrasted (instead of all 7 race categories.)
+
+
+## Program impact
+
+We want to present information about program impact no matter what. But how do we frame this information? Are we super sure we saw an improvement in mindset scores in the study as a whole, or was there a ton of variability in this? This matters for how we discuss the site-level findings...if e.g., only one site failed to find a pre/post effect, but we’re pretty convinced by the data, then that’s a different framing than if the results are all over the place.
+
+We also want to know about program impact ourselves. What impact did the program have and what level of certainty were we even able to achieve about the pre/post effects (setting aside the confound with time). 
+
+
+```{r}
+bare_scales_s1 <- scales_s1 %>% gsub("__s1", "", .)
+bare_scales_s2 <- scales_s2 %>% gsub("__s2", "", .)
+overlapping_scales <- bare_scales_s1[bare_scales_s1 %in% bare_scales_s2]
+
+s1_cols <- paste0(overlapping_scales, "__s1")
+s2_cols <- paste0(overlapping_scales, "__s2")
+id_vars <- c(ag_id_vars, ag_subsets)
+
+pi_m <- melt(ds[c(id_vars, s1_cols, s2_cols)], id.vars = id_vars) %>%
+    separate(variable, into = c("bare_scale", "session"), sep = "__") %>%
+    filter(!value %in% 0 & !is.na(value))
+
+complete_case_nrows <- length(unique(pi_m$bare_scale)) * length(unique(pi_m$session))
+
+pi_complete_cases <- pi_m %>%
+    group_by(participant_id) %>%
+    mutate(complete_case = sum(!is.na(value)) == complete_case_nrows) %>%
+    filter(complete_case) 
+
+program_impact <- function(df){
+    lmer(value ~ session + (1|org_name) + (1|participant_id), data = df)
+}
+
+program_impact_gender <- function(df){
+    lmer(value ~ session * gender_cat__s1 + (1|org_name) + (1|participant_id), data = df)
+}
+
+library("broom")
+pi <- pi_m %>%
+    group_by(bare_scale) %>%
+    nest %>%
+    mutate(
+        model = map(data, program_impact),
+        coeffs = map(model, tidy)
+    ) %>%
+    select(bare_scale, coeffs) %>%
+    unnest  %>%
+    filter(group %in% "fixed", !term %in% "(Intercept)") 
+
+cat("<h4>Overall program impact</h4>")
+cat("<h5>lmer results</h5>")
+
+util.html_table(pi)
+
+ggplot(pi_complete_cases, aes(session, value, fill = session)) +
+    geom_bar(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar +
+    facet_grid(bare_scale ~ .) +
+    ug.ht +
+    ggtitle("Overall program impact")
+
+pi_gender <- pi_m %>%
+    group_by(bare_scale) %>%
+    nest %>%
+    mutate(
+        model = map(data, program_impact_gender),
+        coeffs = map(model, tidy)
+    )  %>%
+    select(bare_scale, coeffs) %>%
+    unnest %>%
+    filter(group %in% "fixed", term %in% "sessions2:gender_cat__s1Male") 
+
+cat("<h4>Program impact by gender</h4>")
+util.html_table(pi_gender)
+ggplot(pi_complete_cases[!is.na(pi_complete_cases$gender_cat__s1), ],
+       aes(session, value, fill = session)) +
+    geom_bar(stat = "summary", fun.y = "mean", position = "dodge") +
+    ug.se_error_bar +
+    facet_grid(gender_cat__s1 ~ bare_scale) +
+    ug.ht +
+    ggtitle("Program impact by gender") +
+    theme(legend.position = "top")
+```
+
+```{r fig.height=20}
+cat("<h4>Program impact by race</h4>")
+program_impact_race <- function(df){
+    lmer(value ~ session * race_cat__s1 + (1|org_name) + (1|participant_id), data = df)
+}
+pi_race <- pi_m %>%
+    group_by(bare_scale) %>%
+    nest %>%
+    mutate(
+        model = map(data, program_impact_race),
+        coeffs = map(model, tidy)
+    )  %>%
+    select(bare_scale, coeffs) %>%
+    unnest %>%
+    filter(group %in% "fixed" & !term %in% "(Intercept)") %>%
+    as.data.frame()
+
+util.html_table(pi_race)
+any(pi_race$statistic > 1.9)
+
+ggplot(pi_complete_cases[!is.na(pi_complete_cases$race_cat__s1), ],
+       aes(session, value, fill = session)) +
+    geom_bar(stat = "summary", fun.y = "mean", position = "dodge") +
+    ug.se_error_bar +
+    facet_grid(race_cat__s1 ~ bare_scale) +
+    ug.ht +
+    theme(legend.position = "top")
+
+```
+
+### Program impact by site
+
+```{r}
+
+program_impact_by_site <- function(df){
+    lmer(value ~ session + (1|participant_id), data = df)
+}
+
+pi_by_site <- pi_m %>%
+    group_by(org_name, bare_scale, session) %>%
+    mutate(n_at_org = n()) %>%
+    filter(n_at_org > 20) %>%
+    group_by(participant_id, bare_scale) %>%
+    mutate(n_sessions = n()) %>%
+    group_by(bare_scale, org_name) %>%
+    mutate(max_sessions = max(n_sessions)) %>%
+    filter(max_sessions %in% 2) %>%
+    ungroup %>%
+    group_by(bare_scale, org_name) %>%
+    nest %>%
+    mutate(
+        model = map(data, program_impact_by_site),
+        coeffs = map(model, tidy)
+    ) %>%
+    select(bare_scale, org_name, coeffs) %>%
+    unnest %>%
+    filter(group %in% "fixed", !term %in% "(Intercept)") %>%
+    select(org_name, bare_scale, term, estimate, std.error, statistic) %>%
+    arrange(org_name)
+util.html_table(pi_by_site)
+ggplot(pi_complete_cases,
+       aes(session, value, fill = session)) +
+    geom_bar(stat = "summary", fun.y = "mean", position = "dodge") +
+    ug.se_error_bar +
+    facet_grid(org_name ~ bare_scale) +
+    ug.ht
+```
+
+### Narrative summary of program impact
+
+* Looks like general fixed mindset and math fixed mindset went down precipitously—woohoo!
+* No effect of treatment on expectancy or stress (though the graph looks like there may be a positive effect on expectancy for African-American students, moderation wasn't significant—might be worth checking this later with more data though)
+* Very strong reduction in fixed mindset for math and for general! (Whew!)
+* No differential treatment effects by race or gender
+* Effect is robust at each site
+

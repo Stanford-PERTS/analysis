@@ -1,0 +1,9 @@
+# UC Davis want access to open responses
+
+
+# the only essay question is Q31
+Section 4: Essay Your Thoughts About Coming to ${e://Field/school_name} 
+
+shared_df <- s1_rn[s1_rn$school_name %in% "UC Davis", c("report_gender", "report_race", "Q31")] %>%
+rename(essay_question = Q31)
+write.csv(shared_df, "~/Desktop/shared_uc_davis.csv")

@@ -1,0 +1,465 @@
+---
+title: "DESCRIPTIVE TITLE"
+author: "NAMES OF CONTRIBUTING ANALYST(S)"
+date: "MONTH/YEAR (USUALLY)"
+output: 
+  html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: ~/Sites/gymnast/Rmd/RMD_styles.css
+---
+
+```{r results='asis'}
+
+# [CODING STYLE GUIDE HERE: http://adv-r.had.co.nz/Style.html]
+# 
+# # Introduction
+# 
+# [DESCRIBE THE PURPOSE AND CONTENT OF THIS DOCUMENT]
+# 
+# ## Input Files
+# 
+# [LIST AND DESCRIBE ALL FILES THAT ARE READ INTO THIS SCRIPT]
+# 
+# ## Output Files
+# 
+# [LIST AND DESCRIBE ALL FILES THAT ARE WRITTEN FROM THIS SCRIPT]
+# 
+# 
+# # Setting the environment
+# 
+# ## Set constants
+# [SET GLOBAL PATH VARIABLES BELOW; 
+# E.G., CRYPT FOLDER, PROCESSED DATA FOLDER, ETC.
+# CONSTANTS SHOULD BE IN ALL CAPS]
+
+```
+
+
+
+
+```{r results='asis', message=FALSE, warning=FALSE}
+# source gymnast functions
+tryCatch({
+    source("~/Sites/gymnast/R/util.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_graphing.R", chdir = TRUE)
+}, error = function(e){
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_legacy.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_qualtrics_cleaning.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_graphing.R")
+})
+
+# source any additional packages that are NOT loaded in gymnast
+# note that almost any package we would ever use is always in gymnast
+
+# set stringsAsFactors to FALSE, and add any other global R settings
+options(stringsAsFactors = FALSE)
+
+# set results to 'asis' for all chunks
+# (can also add any global rmarkdown settings here)
+opts_chunk$set(results = 'asis')
+
+if(!PRINT_CODE){
+    opts_chunk$set(echo = FALSE)
+    opts_chunk$set(message = FALSE)
+    opts_chunk$set(warning = FALSE)
+}
+```
+
+
+
+```{r}
+# ## Local helper functions
+# 
+# [PUT ALL YOUR LOCALLY-CREATED HELPER FUNCTIONS HERE. MAKE SURE TO 
+# CONTRIBUTE ANY GOOD ONES TO the [Miscellaneous Code Archive](https://docs.google.com/document/d/10_K8clWHUQIbO5BWXViiZBXMbRDkni7ypuBJ54l_KWE/edit) 
+# BY CREATING A [gist](https://gist.github.com/).]
+
+
+# lh.helper_function <- function()
+
+```
+
+
+
+```{r}
+
+# # Data Preparation
+# 
+# [THIS IS A GOOD PLACE TO LIST ASSUMPTIONS ABOUT THE STRUCTURE OF THE INCOMING DATA]
+# 
+# ## Load data
+
+# source salt file--note that a salt is a password, and thus should NEVER be printed
+# directly to the console or to the html output!!!! It should only be sourced directly 
+# from a crypt folder.
+
+# salt <- source("salt.R")
+
+data_files_to_load <- list(
+    "br_1" = "baseline_records_1.csv",
+    "cr_1" = "course_records_1.csv"
+)
+
+key_files_to_load <- list(
+    "ck" = "column_key.csv",
+    "tdk" = "term_dates_key.csv",
+    "lgk" = "letter_grade_key.csv",
+    "v1k" = "variable1_key.csv", # e.g., race-recode values
+    "v2k" = "variable2_key.csv"
+)
+
+# raw_file_paths <- util.find_crypt_paths(files_to_load)
+
+# d_raw is a list of data.frames corresponding to the .csvs in `files_to_load`
+# d_raw <- util.read_csv_files(raw_file_paths) 
+
+
+
+```
+
+
+
+```{r}
+
+# ## Pre-process datasets
+# 
+# [USE THIS SECTION FOR CLEANING OPERATIONS INVOLVING INDIVIDUAL DATA FRAMES]
+# 
+# ### De-identify
+
+# loop through d_raw and:
+# - Hash all id variables with the salt
+# - Remove all non-whitelisted variables with uniqueness above a certain threshold
+
+# d_di is a list of de-identified data.frames
+
+# here you can save a hash/id table in the crypt folder, too. This can be useful 
+# for error checking.
+
+```
+
+
+
+```{r}
+
+### Clean columns
+
+#### Standardize column names
+# d_rn is a list of renamed data.frames
+
+```
+
+
+
+```{r}
+#### Standardize column values
+# 
+# * any variable recoding (ideally using a key file)
+# * includes grade recoding with `glk` if applicable
+
+# d_rc  is a list of renamed, recoded data.frames
+```
+
+
+
+```{r}
+
+### Clean rows
+
+#### Logic for handling rows with missing data
+
+
+#### Logic for handling duplicated index values
+
+# Frequently used procedure for handling duplicates in survey data
+# 1. Remove all rows where time on task < 2 minutes
+# 2. Identify subject_ids that are still duplicated
+# 3. Remove all records corresponding to the still-duplicated IDs
+
+```
+
+
+
+```{r}
+
+### Perform key merges
+
+# A key merge is any merge that merges a key file with a 
+# data.frame without changing its type; e.g., merging a stem_key into a 
+# course_records data.frame.
+# 
+# ### Conduct checks on the pre-processed data
+# 
+# #### Unique indexes
+# Make sure your indexes are unique (could use [check_index_is_unique](https://gist.github.com/sarahgripshover/3192e2ce1128bb5e79fc3edc2471d9eb)).
+# 
+# #### Expected numbers of rows
+# 
+# This check is especially important if you've done key merges
+# 
+# ### Optionally, save de-identified, pre-processed data
+# 
+# Sometimes this step can be useful for tracing errors.
+# 
+# 
+# ### Optionally save de-identified, pre-processed data files
+# 
+# [YOU MAY WISH TO CREATE A SAVED VERSION OF YOUR DE-IDENTIFIED, PRE-PROCESSED 
+# DATA FILES, ESPECIALLY IF PRE-PROCESSING IS SLOW. IF SO, DO SO HERE.]
+
+```
+
+
+
+
+```{r}
+## Merge data
+
+# In this section, you will merge data of different kinds; e.g., rbinding 
+# pre-processed data or merging datasets of different types (e.g., merging 
+# demographic info from baseline_records.csv with course_records.csv).
+# 
+# 
+# ### Rbind like datasets
+# use util.rbind_union
+
+### Aggregate and cast data
+
+#### Define relative time variable on time-dependent outcomes
+
+#### Create aggregated outcomes
+
+
+### Merge unlike datasets
+
+
+### Compute variables on merged data
+
+#### Create psychometric scales
+
+# [WE COMPUTE SCALES ON THE FULLY MERGED DATA BECAUSE WE USUALLY WANT 
+# Z-SCORES CENTERED ON THE WHOLE SAMPLE, NOT WITHIN INDIVIDUAL SCHOOLS 
+# OR DATASETS]
+
+
+```
+
+
+
+# Purpose
+
+The purpose of the study was to improve the equity of learning outcomes 
+among students [AT/IN] [COLLABORATING INSTITUTION/POPULATION/ETC.]. 
+
+Specifically, we sought to improve community college students' likelihood 
+of earning a passing grade in college-level math classes.
+
+
+# Executive Summary
+
+[THE EXECUTIVE SUMMARY SHOULD CONTAIN THE FOLLOWING INFORMATION]
+
+* Practical importance—say why this problem is important to people
+* Scientific "lead-up"—science (growth mindset, belonging, etc.) can help the problem
+* Purpose of study w/language from our mission statement
+* Results summary. Make sure to add a simple statement of the main result in *bold*.
+
+[HERE IS AN EXAMPLE:]
+
+[PRACTICAL IMPORTANCE] For millions of Americans, 
+community college serves as an entry 
+point for higher education, and the economic prosperity and social 
+mobility that comes with it. Yet only 41% of students who begin 
+community college manage to attain a certificate, earn a degree, 
+or transfer to a four-year institution within six years.
+
+[SCIENTIFIC LEAD-UP] There are many factors that 
+affect students' achievement. Structural 
+factors such as poverty play a role, as do students' previous 
+academic preparation, the quality of teaching they receive in 
+college, and the responsibilities students have to their 
+families and jobs outside of school. Recent research has 
+suggested that one important factor impacting studnets' 
+achievement is their beliefs and feelings about school 
+and about themselves, or their _learning 
+mindsets_.
+
+One important learning mindset concerns students' beliefs about 
+intelligence. People sometimes think of intelligence as being like eye 
+color---something fixed about you that can’t really be changed. 
+We call this belief a “fixed mindset.” Research shows that 
+when students think in a fixed mindset, they 
+tend to have lower engagement with learning, less adaptive 
+responses to academic setbacks, and eventually, 
+worse academic outcomes. After all, if our basic 
+intelligence can’t really be changed, what’s the point of 
+working hard in a subject that doesn’t come naturally?
+
+The opposite of a fixed mindset is called a growth mindset.
+A growth mindset means understanding that intelligence is more like
+muscle strength---you can increase it through effort, good study 
+strategies, and seeking out challenges. When students think in
+a growth mindset, they tend to be more motivated
+and engaged learners, and they tend to do better academically
+over time as well. They are more likely to stay resilient in the 
+face of setbacks and put more effort into their school 
+work, because they know it will pay off, even in subjects 
+that may not come naturally at first. 
+
+[PURPOSE OF STUDY WITH LANGUAGE FROM MISSIONS STATEMENT]
+
+Fortunately, it is possible to change our mindsets about 
+intelligence! A number of studies have found students can learn to
+adopt a growth mindset through brief, 
+online activities that require only an hour---or even less---of
+students’ time, and that acquiring a growth mindset can
+improve students’ academic performance. 
+
+The aim of the 
+study was to do exactly that: [COLLABORATING INSTITUTION] and 
+PERTS have delivered an online activity to students 
+in developmental math classes and skills classes designed
+to teach them to think with a growth mindset. This shift in 
+thinking is expected to increase their likelihood passing 
+difficult coursework, especially in challenging subjects such 
+as math and science. Eventually, these gains in academic performance 
+may translate to improvements in overall student persistence, 
+degree attainment, and transfer rates to four-year colleges. 
+
+Thus, aimed to promote equity at [PARTNER 
+INSTITUTION] by teaching students in developmental math and skills 
+classes--students who often face the greatest academic challenges 
+and are most vulnerable to negative messages about intelligence--
+to think in a growth mindset.
+
+[BRIEF STATEMENT ABOUT RESULTS] Preliminary results from this 
+study indicate that the program was successful. Students who 
+completed the growth mindset activity were **11% more likely to 
+earn credit in math courses.** Earning math credits is 
+important because required math classes often funcion as "gatekeeper 
+courses," holding students back from further progress if they are not 
+able to earn a passing grade.
+
+
+# Description of the Program
+
+## Program overview
+
+[THIS IS A NARRATIVE SUMMARY OF THE EXPERIMENT; ESSENTIALLY, THE 
+METHODS SECTION. SHOULD INCLUDE THE FOLLOWING INFORMATION]
+
+* What did students do as part of the program?
+* How did instructors implment the program?
+* How many instructors implemented the program?
+* When did they complete the program?
+* How many students completed it?
+* What are some examples of things students wrote?
+
+[EXAMPLE]
+To participate in the College Perspectives Program, students completed an 
+online activity designed to teach them to think in a growth mindset 
+by expert researchers at Stanford University 
+including Carol Dweck and Greg Walton. The program was delivered 
+online. Students clicked on a link which took them to a website
+where they were shown evidence that the brain can change and become 
+smarter. They learned how neural plasticity continues into adulthood, 
+and that people of any age can become substantially smarter with hard 
+work, help from others, and good study strategies. Students then 
+wrote a brief letter to help these other students think in a growth mindset.
+Importantly, the exercise did NOT tell students they should have a 
+growth mindset. It is very important not to do this. When students are 
+told to have a growth mindset, it can make them feel defensive and 
+override the helpfulness of the message. 
+
+They completed the activity as a homework assignment, and it 
+took them about 20 minutes.
+
+
+
+## In students' own words
+
+```{r}
+
+# STUDENT_QUOTES <- quotes[quotes$school_name %in% SCHOOL_NAME, "quote"]
+# 
+# for(quote in STUDENT_QUOTES){
+#     cat('<blockquote><i>')
+#     cat('"')
+#     cat(quote)
+#     cat('"')
+#     cat('</i></blockquote>')
+# }
+
+```
+
+# Results
+
+## Demographics/psychometrics summary
+
+## Effect of treatment
+
+## Moderation
+
+
+
+# Conclusions and next steps
+
+[SAY WHAT WE CAN CONCLUDE FROM THESE RESULTS, AND WHAT THE NEXT STEPS 
+ARE FOR THE RESEARCH COLLABORATION]
+
+[EXAMPLE]
+
+The results from this study are extremely promising. A brief program 
+that students completed in 20 minutes as a homework assignment improved 
+their rate of passing math classes by 11%. [COLLABORATING INSTITUTION] 
+is invited to continue using the growth mindset activity, for free, 
+as long as these positive effects continue.
+
+
+## About PERTS
+
+PERTS is an organization that empowers educators 
+to improve student outcomes by applying research-based practices.
+Education research has a serious problem when it comes to 
+translating ideas into practices. Concepts that are often 
+untested at scale become fads that educators are required to 
+implement in their classrooms without proper training, and 
+students end up suffering the consequences. Promising 
+research is left in the dust when the “Next Big Thing” 
+comes along and policy makers repeat the cycle.
+
+Our mission at PERTS is to improve the equity of 
+learning outcomes by bridging the gap between cutting-edge 
+research and implementation practices. We believe that 
+properly scaling educational research can empower schools 
+to reduce inequity and create better experiences for students 
+and teachers. Learn more at (www.perts.net)[www.perts.net].
+
+
+## Acknowledgements
+
+[SHOUT-OUTS FOR RELEVANT STAKEHOLDERS GO HERE]
+
+We extend a heartfelt thank-you to the students, faculty, and 
+administrators at [COLLABORATING INSTITUTION]. We especially thank 
+[COORDINATOR(S)] for [HIS/HER] outstanding effort to make 
+the program a success.
+
+## Appendix: Methodological and technical details
+
+### Note on interpreting statistics
+
+(e.g., “we used something called regression analysis to examine the impact of the treatment”)
+
+### Experiment design, procedure & methodology details 
+
+### Scale alphas
+
+### Power Analysis
+
+### Extra Tables
+
+### Extra Figures

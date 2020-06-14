@@ -1,0 +1,473 @@
+---
+output:
+  html_document:
+    fig_caption: no
+    toc: no
+    theme: spacelab
+    css: https://raw.githubusercontent.com/PERTS/gymnast/master/Rmd/rmd_styles.css
+---
+
+
+```{r results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+opts_chunk$set(results='asis', eval=TRUE, warning=FALSE, echo=FALSE, message=FALSE, fig.height = 3)
+expected_variables <- c("d_f", "all_items", "organization_name", "present_metrics", "present_subset_groups",
+                        "present_outcomes", "MIN_CELL", "present_drivers", "DRIVER_GRAPH_COLORS",
+                        "OUTCOME_COLORS", "S2_PROP_THRESHOLD", "S2_N_THRESHOLD", "PROBABILITY_THRESHOLD",
+                        "q_group_info")
+if(!exists("organization_name")){
+    organization_name <- report_sites[1, "organization_name"]
+}
+
+nothing <- lapply(expected_variables, function(var){
+    if(!exists(var)){
+        stop(var %+% " was not passed in!")
+    }
+})
+
+cohort_label_readable <- sentence_case(cohort_label) %>% gsub(" spring", "", .)
+
+
+#################################################################################
+######### Create data for graphs and analyses ###################################
+
+# filter data to desired organization_name and relevant columns
+d <- d_f[
+    #d_f$organization_name %in% organization_name, 
+    # I will switch to using project_cohort_id instead of organization name
+    d_f$project_cohort_id %in% project_cohort_id,
+    c("participant_id", present_subset_groups, present_metrics, present_outcomes, 
+      present_outcome_pre_measures, present_panel_groups, "progress__s1", "progress__s2", "expected_participants",
+      "gms__s1_bin", "gms__s2_bin")
+]
+
+# filter summary stats
+rss <- report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id,]
+if(!nrow(rss) == 1) stop("More than one row is identified in report_sites_summary for " %+% project_cohort_id)
+
+
+# create participation summary df
+id_vars <- c("participant_id", present_subset_groups, present_panel_groups)
+participation_summary_df <- d %>%
+    select(participant_id, progress__s1, progress__s2, expected_participants) %>%
+    mutate(
+        participated__session_1 = !is.na(progress__s1),
+        participated__session_2 = !is.na(progress__s2),
+        participated__both = participated__session_1 & participated__session_2
+    ) %>%
+    select(
+        participant_id,
+        participated__session_1,
+        participated__session_2,
+        participated__both,
+        expected_participants
+    ) %>%
+    melt(id.vars = c("participant_id", "expected_participants")) %>%
+    separate(variable, into = c("variable", "session"), sep = "__") %>%
+    mutate(session = factor(session, levels = c("session_1", "session_2", "both"))) %>%
+    group_by(session) %>%
+    summarise(n = sum(value), expected_n = first(expected_participants)) %>%
+    as.data.frame %>%
+    melt(., id.vars = "session") %>%
+    dcast(variable ~ session, value.var = "value") 
+
+
+
+```
+
+```{r eval = !rss$hide_LCs}
+
+########################################################################
+######## Create aggregate data by subsets ##############################
+
+# only include data for participants who did session 1
+data_melted <- melt(d[!is.na(d$progress__s1), c(id_vars, present_metrics)], id.vars = id_vars)
+
+# merge in the min-good and max-good values
+data_melted <- merge(
+    data_melted,
+    all_items[c("var_name", "min_good", "max_good", "question_text", "driver", "q_group")],
+    by.x = "variable",
+    by.y = "var_name"
+)
+data_melted$metric <- as.character(data_melted$variable)
+data_melted$value <- as.numeric(data_melted$value)
+data_melted$good_range <- 
+    data_melted$value <= data_melted$max_good &
+    data_melted$value >= data_melted$min_good 
+data_melted$good_range <- ifelse(data_melted$good_range,1,0)
+
+metrics_with_undefined_range <- data_melted$variable[
+    util.is_blank(data_melted$min_good) & !util.is_blank(data_melted$value)
+] %>% unique %>% as.character
+
+# if any metrics have no defined good range, remove them and warn
+if(length(metrics_with_undefined_range) > 0){
+    warning("The following metrics were removed due to lack of defined range: " %+%
+                paste0(metrics_with_undefined_range, collapse = ", "))
+    data_melted <- data_melted[!data_melted$metric %in% metrics_with_undefined_range, ]
+}
+
+#### Create aggregated dataset
+# dataset will be aggregated in such a way that there is one row per
+# subset, and multiple rows per subset-group (i.e., one row for males, 
+# one row for females, one row for advantaged race, etc). There 
+# is also a row for the full dataset for all students at the relevant organization_name.
+
+ag_metrics_list <- list()
+ag_metrics_list[["Full"]] <- data_melted %>%
+    group_by(metric) %>%
+    summarise(
+        pct_good = mean(good_range, na.rm = TRUE),
+        n = n(),
+        se = se(good_range),
+        subset = "All Students"
+    ) %>%
+    mutate(subset_feature = "All Students") %>%
+    as.data.frame
+    
+
+for(subset_group in present_subset_groups){
+    grouping <- c("metric", subset_group)
+    ag_metrics_list[[subset_group]] <- data_melted %>%
+        group_by_(.dots = grouping) %>%
+        summarise(
+            pct_good = mean(good_range, na.rm = TRUE),
+            n = n(),
+            se = se(good_range),
+            subset = subset_group
+        ) %>%
+        setNames(c("metric", "subset_feature", "pct_good", "n", "se", "subset")) %>%
+        as.data.frame
+}
+
+ag_metrics <- util.rbind_intersection(ag_metrics_list) %>%
+    filter(!is.na(subset_feature))
+
+##############################################################################
+##  Privacy
+##  Remove any subset with a group that has n < min_cell.
+##  Note: removing just the offending offending cell not good enough because
+##  let's say n=30, total=72%, Latino=74%. If only one non-Latino, 
+##      you know they're in the "bad" range.
+##  pixelate groups with no variance (add se even if it does not exist)
+
+# ag_metrics$pct_good[ag_metrics$n < min_cell] <- NA
+
+# pixelate se and pct_good
+# if no variance, impute smallest non-zero se
+# if no pct_good, impute one person worth of it
+ag_metrics$se[ag_metrics$se == 0] <- min(ag_metrics$se[ag_metrics$se > 0], na.rm = TRUE)
+ag_metrics$se[is.na(ag_metrics$se) & ! is.na(ag_metrics$pct_good)] <-
+    min(ag_metrics$se[ag_metrics$se > 0 ], na.rm=TRUE)
+# here we're replacing "0" with the smallest possible proportion of "good" responses
+# so as not to implicate a whole group of students for having uniformly 
+# "bad" responses.
+ag_metrics$pct_good[ag_metrics$pct_good %in% 0] <- 
+    1 / ag_metrics$n[ag_metrics$pct_good %in% 0]
+
+
+# find all the rows corresponding to small n's 
+small_rows <- ag_metrics[ag_metrics$n < MIN_CELL,]
+small_subsets <- small_rows[,c("subset","metric")] %>%
+                    unique() %>%
+                    mutate(delete_small_subset = TRUE)
+# delete values from all rows matching any subset feature/metric/dataset/week start 
+# combos that had small n's. That way, you're not just deleting e.g., the 
+# one gender value with < 5 responses; you're deleting gender as a category 
+# from the report for that dataset/metric/day.
+ag_metrics <- merge(
+    ag_metrics,
+    small_subsets,
+    by = c("subset","metric"),
+    all = TRUE
+) %>%
+    mutate(delete_small_subset = !is.na(delete_small_subset))
+
+ag_metrics[ ag_metrics$delete_small_subset, c("pct_good","se") ] <- NA
+ag_metrics$grand_mean <- ifelse(ag_metrics$subset %in% "All Students","All","Subset")
+
+agm <- merge(ag_metrics, all_items, by.x = "metric", by.y = "var_name", all.x = TRUE, all.y = FALSE)
+agm$subset_feature_f <- factor(agm$subset_feature, c("All Students", "Male", "Female", "Blk/Lat/Other", "White/Asian"))
+
+expected_subset_features <- c("All Students", "Male", "Female", "Blk/Lat/Other", "White/Asian")
+printed_subset_features <- as.character(unique(agm$subset_feature[!is.na(agm$pct_good)]))
+missing_subset_features <- setdiff(expected_subset_features, printed_subset_features)
+
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "missing_subset_features_bel"] <- 
+    paste0(missing_subset_features, collapse = "; ")
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "agm_n"] <- 
+    agm$n[agm$subset_feature %in% "All Students"] %>% unique %>% paste(., collapse = "; ")
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "agm_n_WA"] <- 
+    agm$n[agm$subset_feature %in% "White/Asian"] %>% unique %>% paste(., collapse = "; ")
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "agm_n_BLO"] <- 
+    agm$n[agm$subset_feature %in% "Blk/Lat/Other"] %>% unique %>% paste(., collapse = "; ")
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "agm_n_male"] <- 
+    agm$n[agm$subset_feature %in% "Male"] %>% unique %>% paste(., collapse = "; ")
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "agm_n_female"] <- 
+    agm$n[agm$subset_feature %in% "Female"] %>% unique %>% paste(., collapse = "; ")
+```
+
+```{r}
+# log a bunch of stuff
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "ptable_n_s1"] <-
+    participation_summary_df$session_1[1]
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "ptable_n_s2"] <-
+    participation_summary_df$session_2[1]
+report_sites_summary[report_sites_summary$project_cohort_id %in% project_cohort_id, "ptable_n_both"] <-
+    participation_summary_df$session_2[1]
+
+```
+
+<div id="cover_page">
+<div id="title">
+
+<img src="https://s3.amazonaws.com/PERTS/images/perts-logo.png" style='width:180px;' />
+
+# Growth Mindset for 9th Graders
+## Results for `r organization_name`
+### Spring 2017 - Spring 2018
+
+</div>
+<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>
+<div class="cover-info">
+<div class="cover-date-wrapper">
+<div class="cover-date">
+`r "DATE: " %+% Sys.Date()`
+</div>
+</div>
+</div>
+</div>
+
+# Introduction
+
+<div style='background-color:#e9f1f7; border:1px #282f43 solid; padding:15px; font-size:smaller; width:50%; float: right; clear: right; margin:0.5em 0 1em 1em'>
+### What is growth mindset?
+The understanding that intelligence can grow is known as a _growth mindset_, whereas the belief that intelligence is fixed, like eye color, is called a _fixed mindset_. When students think about school with a growth mindset, research shows that they are more likely to seek challenges, take risks, ask for help, and put effort into their schoolwork—which then leads to higher academic achievement for months or even years to come. They understand that their intelligence is always under construction, and so they do not have to worry that the critical work of learning—studying hard, asking questions, and making mistakes—signals a lack of intelligence. On the contrary, these things are how you become smart. With a growth mindset, students are more likely to seek challenges, take risks, ask for help, and put effort into their schoolwork—which then leads to higher academic achievement for months or even years to come. (See Dweck, 2006.)
+</div>
+
+Thank you for participating in the Growth Mindset for 9th Graders program! The Growth Mindset for 9th Graders program is an online activity designed by researchers at Stanford University and the University of Texas at Austin. This program draws on decades of behavioral science research to lay the foundation for a growth mindset. As part of the program, students learned how the brain keeps developing into adulthood, and that people of any age can become substantially smarter with hard work, help from others, and good study strategies. Students then wrote a brief letter to help other students think with a growth mindset. Importantly, the exercise did NOT tell students that they, themselves, should adopt a growth mindset. (Telling students they should have a growth mindset would violate their sense of autonomy and undermine the effectiveness of the materials.) 
+
+This report is provided by [PERTS](http://www.perts.net) to describe the program’s impact on students at `r organization_name`, to let you know how many students at `r organization_name` participated in the program, and to offer insight into other psychological factors that may be driving motivation in your student body.
+
+<div class='page-break'></div>
+# Impact of the Growth Mindset for 9th Graders Program
+
+## Overall Impact
+
+PERTS is happy to report that over `r program_n_either_rounded` students at more than `r program_n_orgs_rounded` high schools completed the Growth Mindset for 9th Graders program in 2017/18. Across this population, the program’s impact on students’ growth mindset was striking. Before the program, only `r round(program_gms_s1_both, 2)*100`% of students in the sample thought about school with a growth mindset, as measured by scientifically-validated survey items (e.g., ‘You have a certain amount of intelligence, and you can’t really do much to change it.’). After the program, `r round(program_gms_s2_both, 2)*100`% of students thought about school with a growth mindset—an increase of `r round(program_gms_s2_both, 2)*100 - round(program_gms_s1_both, 2)*100` percentage points. Statistical analysis revealed that this difference is `r ifelse(round(1 - program_pval, 5) < .99999, round(1 - program_pval, 5)*100, "99.999")`% likely to be a genuine effect, and not due to chance alone!
+
+```{r fig.height=4, fig.width=4, fig.align='center'}
+program_p_pi
+```
+
+## Impact at `r organization_name`
+```{r}
+
+if(rss$hide_results_s2_n){
+    site_specific_text <- "<p>Program results are not displayed due to low Session 2 participation. " %+%
+            rss$n_both %+% " students from " %+% organization_name %+%
+            " have participated in sessions 1 and 2 of the Growth Mindset for 9th Graders program, " %+%
+            " which falls short of the " %+%
+            S2_N_THRESHOLD %+% " participants required to assess program impact. " %+%
+            "See the Participation Summary section " %+%
+            "for details about participation at " %+% organization_name %+% ".</p>"
+} else{
+    if(!rss$is_neg_deviant){
+        site_specific_text <- "At " %+% organization_name %+%
+            ", the results were broadly consistent — and statistically indistinguishable — from the 
+                results in the program population overall. Students experienced a gain in growth mindset of " %+%
+                as.character(round(rss$gms_bin_change, 2)*100) %+% " percentage points. "
+    } else{
+        site_specific_text <- "<p>At " %+% organization_name %+% ", the program’s results were statistically different than they were in schools overall. Students experienced a change of " %+% as.character(round(rss$gms_bin_change, 2)*100) %+% " percentage points in growth mindset at " %+% organization_name %+% ", whereas students across all schools experienced a change of " %+% as.character(program_pct_pt_increase) %+% " percentage points in growth mindset. It is unclear whether this difference reflects a true difference in the program impact at your school, or whether it was a type 1 error (a statistically significant result that happens randomly). In light of that uncertainty, we recommend three courses of action.</p>" %+%
+            "<p>First, try the program again to ascertain whether these unusual results were a “fluke” or whether they represent a reliable effect. Given the extensive work and testing that has gone into Growth Mindset for 9th Graders, it is likely that these unusual results can be attributed to random variation. However, it is certainly possible that the program has a different impact at your school because of differences in the school context or in the way the program was administered (read on below). If you find that the program consistently does not work at your school, we recommend you stop using it! However, we think that’s unlikely, and we recommend trying again after reviewing the program administration procedures.</p>" %+%
+            "<p>Second, we recommend reviewing the procedures that are used to administer the program. Differences in program administration can lead to differences in how students respond to the program materials. For example, if students are told that the program is supposed to help them develop a growth mindset, or if they are aware that only remedial students are being exposed to the program, this can provoke a defensive reaction in many students (“why do they think I need a growth mindset? Is it because I’m not smart?”). This can undermine the effectiveness of the program — or even lead it to backfire. We recommend you review the administration procedures and compare them to the best practices outlined in [the program information packet](https://neptune.perts.net/static/programs/hg17/information_packet.pdf).</p>" %+%
+            "<p>Finally, you might consider interviewing some students about their experience with the program and the way it was administered. This could point you to changes you could make in the way the program is introduced and overseen at your school, or it could point to changes we should make at PERTS to improve the content of the program. We’re always working to improve our programs so that they work more effectively for more students in more contexts. So, if you discover new insights about the way the program was received by your students, we encourage you to share those insights with us by contacting support@perts.net.</p>"
+    }
+}
+```
+
+`r site_specific_text`
+
+<div class='page-break'></div>
+
+# Participation Summary
+
+The table below shows how many students at `r organization_name` participated in each session of the program during 2017/18 as of April 30, 2018. 
+
+```{r results='asis'}
+
+p_summary_toprint <- participation_summary_df %>%
+    mutate(variable = c("Number of students that participated", "Number expected to participate")) %>%
+    setNames(c("", "Session 1", "Session 2", "Both Sessions"))
+
+if(all(util.is_blank(participation_summary_df[participation_summary_df$variable %in% "expected_n", c("session_1", "session_2", "both")]))){
+    p_summary_toprint <- p_summary_toprint[1, ]
+}
+# the html output adds decimals, for some reason. I will remove them, by converting
+# numbers to strings
+p_summary_toprint_str <- p_summary_toprint %>% lapply (., function(x) paste0(x)) %>% as.data.frame()
+names(p_summary_toprint_str) <- names(p_summary_toprint)
+util.html_table(p_summary_toprint_str)
+
+```
+
+If you would like to see higher participation rates in the future, so that even more students at your school can learn to think with a growth mindset, below are some tips for how to achieve higher participation rates:
+
+* Build buy-in with the facilitators by letting them know about the program ahead of time. (PERTS provides a brief brochure to share with facilitators as part of the [Program Information Packet](https://neptune.perts.net/static/programs/hg17/information_packet.pdf), see the Sample Documents section.)
+* Send out emails to facilitators reminding them to have their students participate.
+* If your school uses a learning management system, such as Blackboard or Google Classroom, consider adding the program to that system.
+* Ask facilitators to schedule make up sessions for students who are absent.
+
+Do you have tips on what did or didn’t work for implementing the program at your school? We’d love to hear from you!  Please send an email to support@perts.net if you’d like to share more about your school’s experience with the program.
+
+<div class='page-break'></div>
+
+# Beyond Growth Mindset: Other Drivers of Student Motivation
+
+## Purpose of this Section
+
+We know that educators at `r organization_name` care deeply about your students’ psychological well-being and motivation—which is why you helped them develop more of a growth mindset by offering them the Growth Mindset for 9th Graders program. Research suggests that this program may have a positive impact on your students’ academic achievement for months, or even years, to come.
+
+Psychological science has recently made great strides in understanding how a number of factors besides growth mindset also contribute to students’ success and well-being. For example, research shows that students learn best when they have a growth mindset, and also when they understand that their teachers care about them, when they feel that they fit in with their peers, and when they see how their coursework is relevant to their life goals.
+
+When your students completed the Growth Mindset for 9th Graders program, we also collected information about other psychological factors that may be shaping their motivation. In this section, we present this information to you, along with ideas for how you can support your students in each area.
+
+Note that <b>this information must not be used for the evaluation of individuals or organizations.</b> There are many reasons why students in different classes or schools might report higher or lower on specific drivers that have nothing to do with school or teaching quality. For example, students with highly educated parents are more likely to understand why schoolwork is relevant to their life because their parents talk about the role of school in their own lives more often. Therefore, using the data in this section to compare across teachers or schools for evaluation purposes is misguided. Instead, we suggest that you use the data to identify ways that your institution can support your students even more as a whole.
+
+To get the best use out of this section, we suggest that you <u>review each motivational driver</u> and ask yourself:
+
+* Is a <u>large percentage of students at my school struggling</u> with this aspect of motivation? For example, if fewer than 50% of your students understand that their classes are teaching them valuable life skills, then you might be able to support your students’ achievement even more by helping them in this area.
+* Are <u>certain subgroups of students at my school particularly in need of support</u> with this aspect of motivation? In this case, addressing the motivational driver with your student body might disproportionately benefit students from those subgroups—which could help narrow achievement gaps. (Note that we recommend addressing the driver with your student body as a whole, rather than singling particular students out, which could make students feel self-conscious.)
+* Is this aspect of <u>motivation more of a challenge than other motivational drivers</u> for my students? Perhaps your students are not struggling heavily with any particular motivational driver, and not showing strong achievement gaps in motivation—but you notice that only 60% of your students understand the relevance of their coursework, compared with 80-90% who feel like they fit in with peers and understand that their teachers care. In that case, you may still be able to help your students by addressing this area of motivation.
+
+<div class='page-break'></div>
+
+## Motivational Drivers at `r organization_name`
+
+```{r}
+
+if(rss$hide_LCs){
+    cat("<p>To protect individual students' privacy, we do not " %+%
+            "report survey results from fewer than " %+% MIN_CELL %+%
+            " students at a time. We therefore require that a minimum of " %+% S1_N_THRESHOLD %+% 
+            " students participate in order to display results. Only " %+% rss$n_s1 %+% " students from " %+%
+            organization_name %+% " have participated in the motivational survey, which was included in Session 1. " %+%
+            "(see Participation Summary, above, for details.) Therefore, no results from the survey are reported at this time. ")
+}
+```
+
+```{r eval = !rss$hide_LCs}
+
+########################################################################
+################## Print graphs for each metric ########################
+
+driver_desc$driver_info_has_been_printed <- FALSE
+
+for(driver in present_drivers){
+    
+    q_groups <- q_group_info$q_group[q_group_info$driver %in% driver] %>% unique
+    driver_label <- sentence_case(driver)
+    
+    this_driver_desc <- driver_desc[driver_desc$driver %in% driver, ]
+    driver_desc_html <- mkdn_friendly_html(this_driver_desc$description)
+    
+    driver_header <- "<h3 id='" %+% driver %+% "'>Motivational Driver: " %+% 
+                driver_label %+% "</h3>"
+    cat(driver_header)
+    cat("<div class='driver_description'>" %+% driver_desc_html %+% "<br><br></div>")    
+    # cat("<div class='driver_introduction'>" %+% driver_intro_html %+% "</div>")
+    
+    
+    # within drivers, we'll iterate over q-groups (bc some drivers have > 3 questions)
+    for(q_group in q_groups){
+        # q_group_df is the subset of q_group_df where the driver matches 
+        # the q-group we're iterating over, and the pct_good value is not NA
+        q_group_df <- agm[agm$q_group %in% q_group &
+                             !is.na(agm$pct_good),]
+        response_options_string <- q_group_df$question_choices %>% unique
+        min_good <- q_group_df$min_good %>% unique
+        max_good <- q_group_df$max_good %>% unique
+        response_options <- get_good_and_bad_responses(response_options_string, min_good, max_good)
+        good_response_string <- paste0(response_options$good, collapse = ", ")
+        ylab_string <- "% of students who selected:\n" %+% good_response_string #%+% "*"
+        
+        driver_cross_section <- 
+            ggplot( q_group_df, 
+                    aes( subset_feature_f, pct_good, fill=grand_mean, color=grand_mean ) 
+            ) +
+            #scale_x_discrete( limits=subset_no_all ) + 
+            geom_bar( 
+                stat="summary", fun.y="mean"
+            ) +
+            scale_fill_manual(
+                breaks=c("All","Subset"),
+                label=c("Control","Treatment"), # override condition names
+                values=DRIVER_GRAPH_COLORS ,
+                guide="none"
+            ) +
+            scale_colour_manual(  
+                guide="none", # removes the color guide
+                values=DRIVER_GRAPH_COLORS
+            ) +
+            facet_grid( . ~ question_text_wrapped ) + 
+            scale_y_continuous( labels=percent) +
+            theme(
+                legend.key=element_rect(color="black", size=ug.text_size),
+                #axis.text=element_text(face="bold", size=ug.text_size ),
+                axis.text.x=element_text(
+                    face="bold", 
+                    size=ug.text_size, 
+                    angle=270,
+                    hjust=0),
+                axis.title=element_text(face="bold"),
+                panel.background    = element_blank() ,
+                #   make the major gridlines light gray and thin
+                panel.grid.major.y  = element_line( size=ug.line_size, colour="#C0C0C0" ),
+                #   suppress the vertical grid lines
+                panel.grid.major.x  = element_blank() ,
+                #   suppress the minor grid lines
+                panel.grid.minor    = element_blank() ,
+                #   adjust the axis ticks
+                axis.ticks    = element_line( size=ug.line_size , colour="black" ),
+                #   move the y-axis over to the left 
+                axis.title.x  = 
+                    element_text( vjust=-.5 , 
+                                  face="bold", 
+                                  color="black", 
+                                  angle=0, 
+                                  size=ug.text_size ) ,
+                axis.text = 
+                    element_text( vjust=0 , face="bold",
+                                  color="black", angle=0, 
+                                  size=ug.text_size ) ,
+                axis.title.y = 
+                    element_text( vjust=.2 , color="black", angle=90, size=ug.text_size ) ,
+                plot.title = element_text(
+                    colour="black", size=plot_title_size, face="bold", hjust=0),
+                plot.margin = unit(c(0,0,0,0), "cm"),
+                panel.margin = unit(panel_margin, "in")
+            ) +
+            xlab("") +
+            ylab(ylab_string) +
+            coord_cartesian(ylim=c(0,1))
+        
+        print(driver_cross_section)
+#         cat("<p><font size = '1'>*(Other response options were " %+%
+#             paste0(response_options$bad, collapse = ", ") %+% ".)" %+%
+#             "</font></p>")
+    }
+    # print out change ideas
+    cat("<p>")
+    cat(change_ideas[[driver]])
+    cat("</p>")
+    cat("<div class='page-break'></div>")
+}
+
+```
+
+
+# About PERTS
+
+PERTS is an organization that empowers educators to improve student outcomes by applying research-based practices. Education research has a serious problem when it comes to translating ideas into practices. Concepts that are often untested at scale become fads that educators are required to implement in their classrooms without proper training, and students end up suffering the consequences. Promising research is left in the dust when the “Next Big Thing” comes along and policy makers repeat the cycle.
+
+Our mission at PERTS is to improve the equity of learning outcomes by bridging the gap between cutting-edge research and implementation practices. We believe that properly scaling educational research can empower schools to reduce inequity and create better experiences for students and teachers. Learn more at [www.perts.net](https://www.perts.net).

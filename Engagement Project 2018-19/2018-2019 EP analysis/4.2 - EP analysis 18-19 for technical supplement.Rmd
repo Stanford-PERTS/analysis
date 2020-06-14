@@ -1,0 +1,561 @@
+---
+title: "Engagement Project Technical Supplement Analyses and Figures"
+author: "Sarah Gripshover"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  pdf_document:
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+    toc: yes
+    toc_depth: 2
+  html_document:
+    fig_caption: yes
+    fig_height: 7
+    fig_width: 9
+    toc_depth: 2  
+---
+
+This document contains all supplementary and exploratory analyses that were used to write the Study 1 section of the [technical supplement to the EP report](https://docs.google.com/document/d/1RJsKdoXp9uonxbs82f2mJvT5eiFkRV2IkISeGjPlBJs/edit?pli=1#). It is based on Dan Greene's cleaning and analysis document entitled "4 - EP analysis 18-19.Rmd". Dan's file was used to obtain all _preregistered_ results that appear in the technical supplement.
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      results = 'asis',
+                      fig.width = 9,
+                      fig.height = 7)
+
+```
+
+```{r, include=FALSE}
+
+############### USER-DEFINED INPUTS #####################################
+
+general_data_folder_crypt_path <- "Data for 2018-2019 EP analysis"
+input_data_crypt_path <- "Data for 2018-2019 EP analysis/4 - 2018-2019 cleaned data for PERTS analysis v1.1.csv"
+
+```
+
+```{r, results='hide', echo = FALSE}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+options(xtable.comment = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    library(tidyverse)
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    gymnast_install()
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(scales)
+
+# Set "today" - by default, use the real today
+TODAY <- lubridate::ymd(Sys.Date())
+
+```
+
+```{r}
+
+############### LOAD DATA #####################################
+
+d <- util.find_crypt_paths(list(a = input_data_crypt_path))$a %>%
+  read.csv()
+
+# shorten race code for presentation purposes
+d$race[d$race %in% "Native American, Other, Black or African American, Hispanic or Latino"] <-
+  "NatAm/Other/Black/Hisp"
+
+# also get first-measurements
+d_first <- dplyr::filter(d, survey_ordinal %in% 1)
+
+# Create first-to-last df for H2
+# And drop all rows where survey_ordinal_ftl == 0, because they are students with just one observation.
+# note that this maneuver actually doesn't work for the items that weren't administered every week.
+# for those we have to do something else.
+
+last_of_more_than_one <- function(x){
+	# takes ordered vector x and returns NA if x has one non-blank element, otherwise returns the last element
+    if(length(x) < 2){
+        return(NA)
+    } else(
+        return(x[length(x)])
+    )
+}
+
+# last_of_more_than_one(c(1,2,3,4,5)) # 5
+# last_of_more_than_one(c(1,2,3,NA,5)) # 5
+# last_of_more_than_one(5) # NA
+
+take_nonblanks <- function(x){
+    # returns all non-blank elements of x
+    return(x[!util.is_blank(x)])
+}
+
+#take_nonblanks(c("", 1, "a", NA))
+# [1] "1" "a"
+
+
+# the main wide dataset is designed to do analyses of first and last observations
+# we want each student's FIRST and LAST observation within the FIRST class in which they
+# took the survey
+
+d_wide_base <- d %>%
+    # identify the FIRST class in which students took the survey
+    group_by(student_id) %>%
+    mutate(
+        students_first_surveyed_class = class_id[survey_ordinal == 1],
+        # also save the number of classes and teachers for posterity.
+        n_classes = n_distinct(class_id),
+        n_teachers = n_distinct(teacher_id),
+        n_teams = n_distinct(team_id)
+    ) %>%
+    dplyr::filter(class_id == students_first_surveyed_class)
+
+# make sure the original number of unique students is preserved
+if(!length(unique(d_wide_base$student_id)) == length(unique(d$student_id))){
+    stop("filtering to each student's first-surveyed class resulted in students being added or dropped from the dataset.
+         Investigate before proceeding.")
+} else{
+    util.passed("filtering to each student's first-surveyed class preserved the original number of students. Nice!")
+}
+
+# now take the wide datset. Note that if this EVER has to be done again, it should probably be done by
+# using mutate to mark first and last observations for each student/variable combo, then casting. But whatev.
+d_wide <- d_wide_base %>%    
+    group_by(student_id) %>%
+    summarise(
+        
+        # first and last values
+                
+        # nowNote that we always take the first non-blank value for "first" observations, and for "last" 
+        # observations we take the last non-blank value UNLESS a subject has only one value, and in that case NA is returned.
+        # note that occasionally this will mean a person's "first" and "last" values can be from different observations
+        # for different variables. Use the last_*_ordinal and days_between variables to make sense of these differences
+        # in cadence.
+            
+        # engagement
+        effort_first = first(take_nonblanks(effort)),
+        effort_last = last_of_more_than_one(take_nonblanks(effort)),
+        attn_first = first(take_nonblanks(attn)),
+        attn_last = last_of_more_than_one(take_nonblanks(attn)),
+        
+        #combined lc score
+        comb_lc_score_first = first(take_nonblanks(comb_lc_score)),
+        comb_lc_score_last = last_of_more_than_one(take_nonblanks(comb_lc_score)),
+        
+        # subscales
+        fg_first = first(take_nonblanks(fg)),
+        fg_last = last_of_more_than_one(take_nonblanks(fg)),
+        mw_first = first(take_nonblanks(mw)),
+        mw_last = last_of_more_than_one(take_nonblanks(fg)),
+        tc_first = first(take_nonblanks(tc)),
+        tc_last = last_of_more_than_one(take_nonblanks(fg)),
+        
+        #items
+        tc1_first = first(take_nonblanks(tc1_2)),
+        tc1_last = last_of_more_than_one(take_nonblanks(tc1_2)),
+        tc2_first = first(take_nonblanks(tc2_2)),
+        tc2_last = last_of_more_than_one(take_nonblanks(tc2_2)),
+        tc4_first = first(take_nonblanks(tc4_2)),
+        tc4_last = last_of_more_than_one(take_nonblanks(tc4_2)),
+        mw1_first = first(take_nonblanks(mw1_2)),
+        mw1_last = last_of_more_than_one(take_nonblanks(mw1_2)),
+        mw2_first = first(take_nonblanks(mw2_2)),
+        mw2_last = last_of_more_than_one(take_nonblanks(mw2_2)),
+        mw3_first = first(take_nonblanks(mw2_2)),
+        mw3_last = last_of_more_than_one(take_nonblanks(mw3_2)),
+        fg1_first = first(take_nonblanks(fg1_2)),
+        fg1_last = last_of_more_than_one(take_nonblanks(fg1_2)),
+        fg2_first = first(take_nonblanks(fg2_2)),
+        fg2_last = last_of_more_than_one(take_nonblanks(fg2_2)),
+        fg3_first = first(take_nonblanks(fg3_2)),
+        fg3_last = last_of_more_than_one(take_nonblanks(fg3_2)),
+        
+        # validation items
+        expected_grade_first = first(take_nonblanks(expected_grade)),
+        expected_grade_last = last_of_more_than_one(take_nonblanks(expected_grade)),
+        gms_first = first(take_nonblanks(gms)),
+        gms_last = last_of_more_than_one(take_nonblanks(gms)),
+        belonging_first = first(take_nonblanks(belonging)),
+        belonging_last = last_of_more_than_one(take_nonblanks(belonging)),
+        teacher_mastery_first = first(take_nonblanks(teacher_mastery)),
+        teacher_mastery_last = last_of_more_than_one(take_nonblanks(teacher_mastery)),
+        
+        # demographics
+        gender = first(gender),
+        race = first(race),
+        prior_gpa = first(prior_gpa),
+        # these don't work because students can be associated with more than one teacher/class/team
+        class_id_first = first(class_id),
+        teacher_id_first = first(teacher_id),
+        team_id_first = first(team_id),
+        
+        n_classes = n_distinct(class_id),
+        n_teachers = n_distinct(teacher_id),
+        n_teams = n_distinct(team_id),
+        
+        # timing variables
+        
+        # last LC survey ordinal is the last time they got a learning conditions survey
+        # so it's the survey_ordinal corresponding to the last non-blank lc value
+        # these are useful for summarizing information about how the first and last timepoints relate to each other
+        last_lc_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(comb_lc_score)]),
+        last_gms_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(gms)]),
+        last_belonging_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(belonging)]),
+        last_teacher_mastery_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(teacher_mastery)]),
+        last_effort_survey_ordinal = last_of_more_than_one(survey_ordinal[!util.is_blank(effort)]),
+        
+        # also get a sense of when the surveys were taken to have some understanding of seasonality, delay etc.
+        first_lc_date = as.Date(first(StartDate[!util.is_blank(comb_lc_score)])),
+        last_lc_date = as.Date(last_of_more_than_one(StartDate[!util.is_blank(comb_lc_score)])),
+        first_gms_date = as.Date(first(StartDate[!util.is_blank(gms)])),
+        last_gms_date = as.Date(last_of_more_than_one(StartDate[!util.is_blank(gms)])),
+        
+        # days_between first and last observations
+        days_between_lc_ftl = difftime(last_lc_date, first_lc_date, units = "days"),
+        days_between_gms_ftl = difftime(last_gms_date, first_gms_date, units = "days")
+
+    ) %>%
+    mutate(
+        # secondary column calculations (based on columns computed in the summarise() call)
+        comb_lc_score_first_bins = floor(comb_lc_score_first),
+        comb_lc_score_last_bins = floor(comb_lc_score_last),
+        
+         # cutoffs
+        gms_str_agr_first = ifelse(gms_first == 5, 1, 0),
+        gms_str_agr_last = ifelse(gms_last == 5, 1, 0),
+        belonging_str_agr_first = ifelse(belonging_first == 5, 1, 0),
+        belonging_str_agr_last = ifelse(belonging_last == 5, 1, 0),
+        
+        gms_agr_first = ifelse(gms_first >= 4, 1, 0),
+        gms_agr_last = ifelse(gms_last >= 4, 1, 0),
+        belonging_agr_first = ifelse(belonging_first >= 4, 1, 0),
+        belonging_agr_last = ifelse(belonging_last >= 4, 1, 0),
+        
+        # deltas
+        effort_ftl = effort_last - effort_first,
+        attn_ftl = attn_last - attn_first,
+        comb_lc_score_ftl = comb_lc_score_last - comb_lc_score_first,
+        fg_ftl = fg_last - fg_first,
+        mw_ftl = mw_last - mw_first,
+        tc_ftl = tc_last - tc_first,
+        expected_grade_ftl = expected_grade_last - expected_grade_first,
+        gms_ftl = gms_last - gms_first,
+        belonging_ftl = belonging_last - belonging_first,
+        teacher_mastery_ftl = teacher_mastery_last - teacher_mastery_first,
+        gms_str_agr_first_ftl = gms_str_agr_last - gms_str_agr_first,
+        
+        # improvement 
+        lc_improved = comb_lc_score_ftl > 0
+
+    )
+
+# how many students had more than one class, teacher, etc.
+d_ftl %>%
+    group_by(mult_classes = n_classes > 1, mult_teachers = n_teachers > 1, mult_teams = n_teams > 1) %>%
+    summarise(
+        n = n(),
+        prop = n/nrow(d_ftl)
+    ) 
+# but in some cases we may want to consider ordinal survey values in the wide data, like when computing psych scales
+
+individual_items <- c("tc1_2", "tc2_2", "tc4_2", "fg1_2", "fg2_2", "fg3_2", "mw1_2", "mw2_2", "mw3_2",
+                     "effort", "attn", "gms_2.0", "gms_3.0", "belong_4", "belong_3.1", "mastery1", "mastery2")
+
+d_wide_casted <- d[c("student_id", "survey_ordinal", individual_items)] %>%
+    melt(., id.vars = c("student_id", "survey_ordinal")) %>%
+    separate(variable, into = c("variable", "version"), sep = "_" ) %>%
+    # the separation breaks the gms and belonging variable notation so fix them by hand
+    mutate(
+        variable = ifelse(variable %in% c("gms", "belong"), variable %+% version, variable)
+    ) %>%
+    dcast(student_id ~ variable + survey_ordinal) %>%
+    # now filter out really ridiculous numbers of observations generating columns filled with mostly blank data
+    # we'll keep everyone's data only through their NINTH observation, which eliminates about 5% of the data
+    # table(d$survey_ordinal > 9)/nrow(d). Note that LAST observations will still be accurate bc these were pulled from the wide data
+    select(-matches("_[1-9][0-9]"))
+```
+
+
+```{r}
+# and here's a fidelity df based on Dan Greene's original code for determining high fidelity classes in
+# the script 4 EP analysis 18-19.Rmd
+# ...crap. I think we actually can't use the wide data analyses. Because the items are only supposed to be valid
+# WITHIN classes. Students should be able to give different answers within classes.
+
+# option 1: repeat all analyses using ONLY students who were in only one class
+# option 2: repeat all analyses using data from all students, and fitting intercepts for students (and all that jazz)
+# option 3: keep the analyses we have
+
+# ... ok MAYBE what I could do is consider each student's first CLASS only. How would that work?
+
+# I think I'm going to go ahead and finish what I have to do, but then deal with this nesting BS
+# but I can't really do it without cycles, or ordinal class surveys, can I?
+# I could take all students' first and last observations within classes, I suppose
+
+# Make a data.frame that summarises to the class level (1 row per class)
+# get first-to-last scores for each student WITHIN classes (as opposed to the wide dataset which considers only students)
+
+# now merge them all together
+
+d_wide <- merge(d_ftl, d_wide_casted)
+
+d_wide <- merge(
+    d_wide,
+    # get rid of class and teacher id because the grouping operations broke their correspondences to individual students
+    d_class, 
+    by = c("class_id")
+)
+
+d_wide <- merge(
+    d_wide,
+    # get rid of class and teacher id because the grouping operations broke their correspondences to individual students
+    d_teacher, 
+    by = c("teacher_id")
+)
+
+# quickly check the merges
+if(!nrow(d_wide) == nrow(d_wide_casted) | !nrow(d_wide) == nrow(d_ftl)){
+    stop("inner joins d_ftl, d_wide_casted, and fidelity_df resulted in rows being added or dropped. These objects should share a primary key with perfectly overlapping values (i.e., the column student_id). Investigate further before proceeding.")
+} else{
+    util.passed("Joins to form wide df maintained expected number of rows. Nice!")
+}
+
+```
+# Demograhics
+```{r}
+d_wide %>%
+    group_by(race) %>%
+    summarise(n = n()) %>%
+    mutate(race = ifelse(is.na(race), "Missing", race)) %>%
+    mutate(race = ifelse(race %in% "masked", "Masked", race)) %>%
+    xtable()
+
+d_wide %>%
+    group_by(gender) %>%
+    summarise(n = n()) %>%
+    mutate(gender = ifelse(is.na(gender), "Missing", gender)) %>%
+    mutate(gender = ifelse(gender %in% "masked", "Masked", gender)) %>%
+    xtable()
+
+```
+# Psychometrics
+
+```{r}
+
+# make the scale key by hand.Note that the word "scale" in the column name is used to pick out columns indicating scale membership.
+# so be sure to keep this naming convention if you edit the doc. (Don't name any non-scale columns using the word "scale" and don't 
+# leave the word "scale" out of scale columns.)
+
+# scale_vars <- data.frame(
+#     var_name = names(d_wide)[grepl("_1", names(d_wide))],
+#     scale = c("attention", "belonging", "belonging", "effort", "lc_combined", "lc_combined", "lc_combined", "gms", "gms", "teacher_mastery", "teacher_mastery", "lc_combined", "lc_combined", "lc_combined", "lc_combined", "lc_combined", "lc_combined")
+# )
+
+# now create a set of scales that drops the item that was missing from study 2
+# scale_vars$scale_drop1 <- scale_vars$scale
+# scale_vars$scale_drop1[scale_vars$scale %in% "lc_combined"] <- "lc_drop_one"
+# scale_vars$scale_drop1[scale_vars$var_name %in% "fg1_1"] <- NA
+# 
+# # and a set of scales for individual LCs
+# scale_vars$scale_indiv_lcs <- scale_vars$scale
+# scale_vars$scale_indiv_lcs[grepl("^fg", scale_vars$var_name)] <- "fg"
+# scale_vars$scale_indiv_lcs[grepl("^tc", scale_vars$var_name)] <- "tc"
+# scale_vars$scale_indiv_lcs[grepl("^mw", scale_vars$var_name)] <- "mw"
+
+# # write to csv so that future versions can be hand-edited
+# write.csv(scale_vars, "~/Sites/analysis/Engagement Project 2018-19/2018-2019 EP analysis/scale_variables_all_lc_combined.csv", row.names = FALSE)
+
+# now read it in
+scale_vars <- read.csv("~/Sites/analysis/Engagement Project 2018-19/2018-2019 EP analysis/scale_variables_all_lc_combined.csv", stringsAsFactors = FALSE)
+
+# find the unique values in all the scales columns.
+scales <- scale_vars %>%
+    select(matches("scale")) %>%
+    unlist %>%
+    unname %>%
+    unique
+scales <- scales[!is.na(scales)]
+
+
+alphas <- data.frame(
+    scale = scales,
+    alpha = NA
+)
+
+# for each unique scale name, I want to find the items associated with it, and compute an alpha for those items.
+
+for(s in scales){
+    # find all the columns in which a scale label appears    
+    scale_type_cols <- names(scale_vars)[unlist(util.apply_columns(scale_vars, function(x) s %in% x ))]
+   
+   
+   # if more than one, check that each column always picks out the same items
+    if(length(scale_type_cols) == 1){
+        items <- scale_vars$var_name[scale_vars[, scale_type_cols] %in% s]
+    } else if(length(scale_type_cols) > 1){
+        # get a list of the items specified by each scale label
+        item_row_indexes <- lapply(scale_vars[scale_type_cols], function(x) which(x %in% s))
+        items <- lapply(item_row_indexes, function(x) return(scale_vars$var_name[x]))
+        
+        # check that each column picked out the same items
+        if(!all(sapply(items, function(x) all(x == items[[1]])))){
+            stop("Your scale_vars df assigns the same scale label to different groups of items across columns. You have to fix this in order to proceed.")
+        }
+        
+        items <- items %>% unlist %>% unique
+        
+    } else if(length(scale_type_cols) == 0){
+        util.warn("for scale " %+% s %+% ", no matches were found in scale_vars data.frame. Moving on to next variable")
+        items <- NA
+        next
+    }
+    if(length(items) > 1){
+        alphas$alpha[alphas$scale %in% s] <- psych::alpha(d_wide[items])$total$raw_alpha
+    } else{
+        alphas$alpha[alphas$scale %in% s] <- NA
+    }
+    
+}
+
+
+
+
+
+
+
+
+# if not, throw a warning and move on
+
+# if so, find the items and put them in the data.frame
+
+
+# then go through the list and pull out
+
+```
+
+# Improved learning conditions
+
+The Brief Report states that 70% of teachers improved one or more learning conditions when they implemented the Engagement Project (with fidelity).
+
+```{r}
+
+d_wide %>%
+    dplyr::filter(tuq_over_80_teacher) %>%
+    group_by(teacher_id) %>%
+    summarise(
+        improved_tc = mean(tc_ftl > 0),
+        improved_fg = mean(fg_ftl > 0),
+        improved_mw = mean(mw_ftl > 0)
+    )
+
+
+```
+
+
+# Improved effort
+
+Students who reported learning conditions as positive in a given week were X% more likely to say they put a lot of effort.
+
+```{r}
+# object "d" was used because findings are reported at the student/week level
+d$lc_agr_stragr <- d$comb_lc_score >= 6
+d$lc_agree_disagree <- d$comb_lc_score >= 5
+
+d %>%
+    dplyr::filter(!is.na(lc_agree_disagree)) %>%
+    group_by(lc_agree_disagree) %>%
+    summarise(
+        strong_effort_5 = mean(effort == 5, na.rm = T),
+        strong_attn_5 = mean(attn == 5, na.rm = T)
+    ) %>%
+    xtable()
+
+d$lc_agr_stragr <- d$comb_lc_score >= 6
+d$lc_agree_disagree <- d$comb_lc_score >= 5
+
+d %>%
+    dplyr::filter(!is.na(lc_agr_stragr)) %>%
+    group_by(lc_agr_stragr) %>%
+    summarise(
+        strong_effort_5 = mean(effort == 5, na.rm = T),
+        strong_attn_5 = mean(attn == 5, na.rm = T)
+    ) %>%
+    xtable()
+```
+
+
+# Increased belonging and growth mindset
+The Brief Report states that, “When learning conditions improved, students were 24% more likely to increase in growth mindset, and 90% more likely to experience a stronger sense of belonging.”
+
+## Percentages
+```{r}
+d_wide %>%
+    group_by(lc_improved) %>%
+    dplyr::filter(
+        !is.na(last_lc_survey_ordinal),
+        !is.na(last_gms_survey_ordinal),
+        !is.na(last_belonging_survey_ordinal)
+    ) %>%
+    summarise(
+        n = n(),
+        prop_n = n/nrow(.),
+        belonging_improved = mean(belonging_ftl > 0),
+        gms_improved = mean(gms_ftl > 0)
+    ) %>%
+    xtable()
+
+```
+
+## Models
+```{r}
+# the analyses currently reported are those that don't control for baseline gms/belonging (in parallel
+# with preregistered H2). However, controlling for these two things can help rule out regression to the mean
+# as an explanation for the correspondence between ftl scores. So they're here but just commented out, so that
+# it's easier to turn them back on.
+lmer(gms_ftl ~ comb_lc_score_ftl + comb_lc_score_first #+ gms_first 
+        + gender + race + prior_gpa +
+         (1 | class_id) + (1 | teacher_id) + (1 | team_id), data = d_wide) %>%
+    summary %>%
+    util.html_table()
+
+
+lmer(belonging_ftl ~ comb_lc_score_ftl + comb_lc_score_first #+ belonging_first 
+        + gender + race + prior_gpa +
+         (1 | class_id) + (1 | teacher_id) + (1 | team_id), data = d_wide) %>%
+    summary %>%
+    util.html_table()
+
+
+```
+
+
+
+```{r}
+
+
+```
+
+
+

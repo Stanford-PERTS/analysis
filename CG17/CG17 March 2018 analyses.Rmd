@@ -1,0 +1,332 @@
+---
+title: "CG17 analysis for Joyce paper (internal)"
+author: "Sarah Gripshover"
+date: "September 2017"
+output: 
+    html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: ~/Sites/gymnast/Rmd/rmd_styles.css
+---
+
+```{r message = FALSE, warning = FALSE}
+REPO <- "~/Sites/analysis/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_graphing.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_scale_computation.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_data_summaries.R", chdir = TRUE)
+}, error = function(e){
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_legacy.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_qualtrics_cleaning.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_graphing.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_scale_computation.R")
+})
+
+opts_chunk$set(warning = FALSE, message = FALSE, results = "asis")
+
+files <- list(
+    d_wide = "CG_data_wide_2018-03-19.csv",
+    task = "task_2018-03-20.csv",
+    pc = "project_cohort_2018-03-19.csv"
+)
+
+paths <- util.find_crypt_paths(files)
+
+dw_raw <- read.csv(paths$d_wide, stringsAsFactors = FALSE) # wide dataet
+tasks <- read.csv(paths$task, stringsAsFactors = FALSE) # tasks (has fidelity measures from Neptune)
+pc <- read.csv(paths$pc, stringsAsFactors = FALSE)
+#dl <- read.csv(paths$d_long) # data melted so that rows distinguish pre/post treatment questions
+var_desc <- read.csv(REPO %+% "CG17/CG17_variable_descriptions.csv", stringsAsFactors = FALSE)
+
+# local helpers
+mean_narm <- function(x) mean(x, na.rm = TRUE)
+
+```
+
+
+```{r}
+# merge in fidelity info from Neptune
+library("tidyr")
+ts <- separate(tasks, uid, into = c("task_id", "other_id"), sep = "\\.") %>%
+    separate(other_id, into = c("linked_id_type", "linked_id_numeric"), sep = "_") %>%
+    mutate(linked_id = paste(linked_id_type, linked_id_numeric, sep = "_"))
+
+fidelity_neptune <- ts %>%
+    filter(label %in% c(
+        "cg17_survey__administration_method",
+        "cg17_survey__administration_context",
+        "cg17_survey__expected_participants",
+        "cg17_survey__other_gms"
+        )
+    ) %>%
+    select(task_id, linked_id_type, linked_id, status, label, attachment) %>%
+    dcast(linked_id_type + linked_id ~ label, value = "attachment") %>%
+    setNames(., gsub("cg17_survey__", "", names(.)))
+
+dw <- merge(dw_raw, fidelity_neptune, by.x = "survey_id", by.y = "linked_id", all.x = TRUE, all.y = FALSE)
+if(!nrow(dw) == nrow(dw_raw)){
+    stop("merging in fidelity information changed the number of rows in the wide data. This is not expected. Investiate.")
+}
+
+
+## some new variables
+dw$read_instructions_outloud <- ifelse(dw$activity_2 == "read out loud", 1, 0)
+dw$instructions_atall <- ifelse(dw$activity_2 == "read out loud" | dw$activity_2 == "handout", 1, 0)
+
+dw$homework <- ifelse(dw$student_loc == "homework", 1, 0)
+dw$in_class <- ifelse(dw$student_loc == "in class", 1, 0)
+
+```
+
+# Program impact on Mindsets
+
+## Overall effects
+
+```{r}
+
+
+# some sd analyses, in case I ever want to adjust for sd as well
+# dw$gms_post_3_adj <- dw$gms_post_3 - .36 + rnorm(nrow(dw), 0, .6)
+# dw$gms_post_4_adj <- dw$gms_post_4 - .46 + rnorm(nrow(dw), 0, .5)
+# sd(dw$gms_post_3_adj, na.rm = T) # 1.186
+# # (with rnrom, about 1.32, compared with 1.27 in the IES data and 1.32 in the pre-variable)
+# sd(dw$gms_post_4_adj, na.rm = T) # 1.24
+# # (with rnorm, about 1.32, compared with 1.14 in the IES data and 1.32 in the pre-variable)
+# sd(dw$gms_pre, na.rm = T) # 1.32, compared with 1.33 in the IES data, so nearly the same (though the mean is lower)
+
+# adjust the scale variables to account for item effects. Subtract .46 from the post-treatment score
+# to account for item effects (gms_post_3 had a mean score .36 scale points higher than gms_pre in 
+# the IES study, and gms_post_4 had a mean score .46 points higher. Take .46 as the upper bound.)
+dw$gms_post_neg_adj <- rowMeans(dw[c("gms_post_3", "gms_post_4")]) - .46
+dw$gms_diff_neg_adj <- dw$gms_post_neg_adj - dw$gms_pre
+```
+
+```{r}
+
+mean(dw$gms_pre, na.rm = T)
+mean(dw$gms_post_neg_adj, na.rm = T)
+MEAN_DIFF <- mean(dw$gms_diff_neg_adj, na.rm = T)
+t.test(dw$gms_pre, dw$gms_post_neg_adj, paired = T, var.eq = TRUE) # still highly significant by paired t-test, effect size
+# is about half a scale point, as opposed to almost a whole scale point, as previously thought
+# by this analysis: t.test(dw$gms_diff_neg)
+
+# see how many students shifted to a growth mindset
+dw$gms_cat_post_neg_adj <- NA
+dw$gms_cat_post_neg_adj[dw$gms_post_neg_adj <= 2] <- "fixed"
+dw$gms_cat_post_neg_adj[dw$gms_post_neg_adj <= 4 & !dw$gms_cat_post_neg_adj %in% "fixed"] <- "mixed"
+dw$gms_cat_post_neg_adj[dw$gms_post_neg_adj > 4] <- "growth"
+
+dw %>%
+    filter(!is.na(gms_cat_pre) & !is.na(gms_cat_post_neg_adj)) %>%
+    group_by(gms_cat_pre) %>%
+    summarise(n = n()) %>%
+    util.html_table()
+
+dw %>%
+    filter(!is.na(gms_cat_pre) & !is.na(gms_cat_post_neg_adj)) %>%
+    group_by(gms_cat_pre, gms_cat_post_neg_adj) %>%
+    summarise(n = n()) %>%
+    util.html_table()
+
+
+
+adj_effect_summary <- dw %>%
+    group_by(organization_id, organization_name, organization_name_wrapped) %>%
+    mutate(n = n()) %>%
+    filter(n > 20) %>%
+    summarise(
+        unadjusted_diff = mean(gms_diff_neg),
+        adjusted_diff = mean(gms_diff_neg_adj),
+        adjusted_t = t.test(gms_diff_neg_adj)$statistic,
+        adjusted_p = t.test(gms_diff_neg_adj)$p.value
+    ) %>%
+    mutate(adj_sig = ifelse(
+        adjusted_p < .001, "***",ifelse(
+            adjusted_p < .01, "**", ifelse(
+                adjusted_p < .05, "*", ifelse(
+                    adjusted_p < .1, "+", "n.s."))))
+    ) %>%
+    as.data.frame
+
+# how many sites are reduced to non-significance?
+table(adj_effect_summary$adj_sig) %>%
+    util.html_table()
+```
+
+## Effects by site
+
+```{r}
+items_for_college_summary <- c(var_desc$var_name[var_desc$summarise_by_college], "instructions_atall", "homework", "in_class")
+scales <- c(unique(var_desc$scale[!util.is_blank(var_desc$scale)]), "gms_post_neg_adj", "gms_diff_neg_adj")
+
+# get mean change scores by college
+d_college <- dw %>%
+    group_by(organization_id, survey_id) %>%
+    summarise_at(
+        c(items_for_college_summary, scales, "gms_diff", "gms_diff_neg", "gms_diff_neg_adj"),
+        .funs = funs(mean_narm)
+    ) %>%
+    as.data.frame
+
+
+# add demographic summaries
+demo_by_college <- dw %>%
+    group_by(organization_id, survey_id) %>%
+    summarise(
+        prop_female = mean(gender_simplified %in% "Female"),
+        prop_disadv_race = mean(race_simplified %in% "Blk/Lat/Oth"),
+        total_participants = n()
+    )
+
+# merge info together
+d_college <- merge(
+    d_college,
+    unique(dw[c("organization_name", "organization_id", "organization_name_wrapped")]),
+    by = "organization_id"
+)
+d_college <- merge(d_college, demo_by_college, by = "survey_id")
+
+# merge in fidelity info too
+d_college <- merge(d_college, fidelity_neptune, by.x = "survey_id", by.y = "linked_id", all.x = TRUE, all.y = FALSE)
+
+```
+
+### Histogram
+```{r fig.height=5, fig.width=7}
+ggplot(d_college[d_college$total_participants > 20, ], aes(gms_diff_neg_adj)) +
+    geom_histogram(binwidth = .03) +
+    geom_vline(xintercept = 0) +
+    ggtitle("Histogram of adjusted pre/post growth mindset change scores by site") +
+    xlab("Growth mindset change scores from pre to post (in number of scale points)") +
+    ug.ht +
+    theme(plot.title = element_text(size = 12))
+if(!interactive()){
+    # only save when knitting to make sure fig.height and fig.width params get used
+    ggsave(REPO %+% "CG17/graphs_and_tables/effect_histogram.png")
+}
+```
+
+### Correlates of site variability
+
+I wanted to understand a bit more about the reasons for variability across our college partners. First, I pulled the names of all the outlier schools to see whether any of them would ring a bell. Indeed, three of them are campuses at San Jacinto. 
+
+#### Summary of outlier schools
+
+```{r eval = FALSE}
+
+one_sd <- sd(d_college$gms_diff_neg_adj, na.rm = T)
+mean_of_samples <- mean(d_college$gms_diff_neg_adj, na.rm = T)
+
+d_college %>%
+    filter(gms_diff_neg_adj > mean_of_samples + 2*one_sd |
+               gms_diff_neg_adj < mean_of_samples - 2*one_sd) %>%
+    select(organization_name, gms_diff_neg_adj, total_participants, expected_participants, administration_context, administration_method, other_gms) %>%
+    util.html_table()
+
+```
+
+#### Correlations with school-level fidelity measures
+
+```{r fig.height = 12, fig.width = 5}
+
+site_level_correlates <- c("administration_method")
+survey_correlates <- c(
+    scales[-grep("gms", scales)],
+    var_desc$var_name[var_desc$is_fidelity & var_desc$is_metric],
+    "homework", "in_class", "instructions_atall"
+)
+```
+
+##### Student level psych/fidelity variables
+```{r fig.height=15}
+# look at the student level first
+gms_post_neg_adj_resid <- data.frame(
+    residual = lm(gms_post_neg_adj ~ gms_pre, data = dw)$residuals,
+    row_name = names(lm(gms_post_neg_adj ~ gms_pre, data = dw)$residuals)
+)
+dw_resid <- dw
+dw_resid$row_name <- row.names(dw_resid)
+dw_resid <- merge(dw_resid, gms_post_neg_adj_resid, by = "row_name")
+dm <- melt(
+    dw_resid[c("participant_id", "survey_id", "organization_id", "organization_name", survey_correlates, "gms_pre", "gms_post_neg_adj", "residual", "gms_diff_neg_adj")],
+    measure.vars = survey_correlates
+)
+
+custom_lm <- function(df){
+    lm(gms_post_neg_adj ~ value + gms_pre, data = df)
+}
+
+formulae <- ds.build_glm1_formulas(dvs = c("gms_post_neg_adj"), ivs = survey_correlates, cov_groups = "gms_pre")
+results <- ds.glm1s(formulae, dw) %>%
+    ds.get_model_summary_df()
+results %>% 
+    filter(!covs %in% "NA") %>%
+    select(dv, iv, covs, iv_coef, iv_se, iv_stat, iv_p, iv_apa) %>%
+    util.html_table()
+
+# at the college level...nothing is significant
+results_c <- ds.glm1s(formulae, d_college) %>%
+    ds.get_model_summary_df()
+results_c %>% 
+    filter(!covs %in% "NA") %>%
+    select(dv, iv, covs, iv_coef, iv_se, iv_stat, iv_p, iv_apa) %>%
+    util.html_table()
+
+# what about change scores at the individual/college level?
+formulae_change <- ds.build_glm1_formulas(dvs = c("gms_diff_neg_adj"), ivs = survey_correlates)
+results_change <- ds.glm1s(formulae_change, dw) %>%
+    ds.get_model_summary_df()
+
+results_change %>% 
+    select(dv, iv, covs, iv_coef, iv_se, iv_stat, iv_p, iv_apa) %>%
+    util.html_table()
+
+results_c_change <- ds.glm1s(formulae_change, d_college) %>%
+    ds.get_model_summary_df()
+
+results_c_change %>% 
+    select(dv, iv, covs, iv_coef, iv_se, iv_stat, iv_p, iv_apa) %>%
+    util.html_table()
+
+
+```
+
+#### Student demographics
+
+```{r}
+
+```
+
+
+# Participation Analyses
+
+```{r}
+
+participation_summary <- d_college %>%
+    group_by(total_participants) %>%
+    summarise(n_colleges = n()) %>%
+    arrange(n_colleges) 
+
+# participation_summary %>%
+#     util.html_table
+
+sum(participation_summary[participation_summary$total_participants < 100, "n_colleges"])
+
+d_college$expected_participants <- as.numeric(d_college$expected_participants)
+d_college$prop_participation <- d_college$total_participants/d_college$expected_participants
+ggplot(
+    d_college[!d_college$administration_method %in% "independent",], 
+    aes(administration_method, total_participants)
+) +
+    geom_bar(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar + 
+    ug.ht
+
+lm(total_participants ~ administration_method, data = d_college[!d_college$administration_method %in% "independent",]) %>%
+    summary.aov %>%
+    util.html_table()
+```

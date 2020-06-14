@@ -1,0 +1,32 @@
+---
+title: "Expandable Chunk Demo"
+author: "CAM"
+date: "February 16, 2016"
+output:
+  html_document:
+    theme: spacelab
+    css: rmd_styles.css
+---
+
+Sets a source code chunk to be hidden by default, but also allow it to be
+shown on demand with a simple checkbox.
+
+First source `expandable_chunks.R` from commmon (includes gymnast if
+necessary; output hidden here).
+
+```{r, include=FALSE}
+source("expandable_chunks.R")
+```
+
+Then add the option `expandable=TRUE` to your chunk.
+
+```{r, expandable=TRUE}
+summary(cars)
+```
+
+If you name your chunk, it will be displayed in the placeholder for the hidden
+source code.
+
+```{r Demo, expandable=TRUE}
+summary(cars)
+```

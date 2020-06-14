@@ -1,0 +1,262 @@
+---
+title: "SEP aims - June 2020"
+author: "Sarah Gripshover & Smriti Mehta"
+date: "Summer 2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+# Analyst inputs
+
+# set to TRUE if you want to query the Saturn server directly.
+# Note that TRUE requires perts_crypt.vc to be mounted. If you don't have
+# access to this, then Sarah or Chris will have to help.
+NEW_DATA_PULL <- FALSE
+DATA_CRYPT_TOSAVE <- "/Volumes/NO NAME 1/"
+
+# some default settings
+knitr::opts_chunk$set(echo = FALSE, results = 'asis', message = FALSE)
+options(xtable.comment = FALSE, xtable.include.rownames = FALSE)
+
+# libraries, packages & global objects
+library("dplyr")
+library("here")
+library("xtable")
+library("reshape2")
+library("ggplot2")
+paste0 -> `%+%`
+
+# for reasons known only to Hadley Wickham's therapist, the import module
+# functions DO NOT WORK unless you call setwd() within the same chunk...not
+# even with `here()`. So setwd to analysis.
+project_repo <- here()
+rserve_path <- here() %+% "/../rserve/"
+setwd(project_repo)
+
+modules::use("gymnast/R/bootstrap.R")$install_module_imports()
+
+items <- read.csv(
+  rserve_path %+% '/config/copilot_items.csv',
+  stringsAsFactors = FALSE
+  ) %>%
+  dplyr::filter(cset19)
+
+subset_config <- read.csv(
+  rserve_path %+% 'config/copilot_items.csv',
+  stringsAsFactors = FALSE
+  ) %>%
+  dplyr::filter(cset19)
+
+
+scale_computation <- import_module('scale_computation')
+saturn <- import_module('saturn')
+util <- import_module('util')
+graphing <- import_module('graphing')
+
+```
+
+
+```{r}
+# read in the data
+if(NEW_DATA_PULL){
+
+  paths <- list(creds = 'rserve_credential_body.json')
+  creds_json <- util$find_crypt_paths(paths)$creds
+  creds <- jsonlite::fromJSON(creds_json)
+  
+  saturn_service <- saturn$create_service(creds$saturn_sql_credentials)
+  responses <- saturn_service$get_responses(
+    survey_label = "cset19",
+    start_date = '2020-01-01',
+    end_date = '2020-05-27'
+  )
+  
+  if(!is.null(DATA_CRYPT_TOSAVE)){
+    write.csv(responses, DATA_CRYPT_TOSAVE %+% "saturn_data_raw.csv")
+  }
+  
+} else{
+  responses <- util$find_crypt_paths("saturn_data_raw.csv") %>%
+    read.csv(stringsAsFactors = FALSE)
+}
+
+```
+
+
+```{r}
+# clean the data
+
+disadv_race <- items$question_code[items$race_disadv & !is.na(items$race_disadv)]
+adv_race <- items$question_code[items$race_adv & !is.na(items$race_adv)]
+scale_vars <- items %>%
+  filter(composite_input) %>%
+  select(var_name = question_code, scale = driver) %>%
+  mutate(
+    scale = gsub("-", "_", scale),
+    # and we have to substitute the reverse coded identity safety items in for the id threat ones
+    var_name = gsub("idthreat", "idsafety", var_name),
+    scale = gsub("identity_threat", "identity_safety", scale)
+  )
+composite_metrics <- unique(scale_vars$scale)
+is_good <- function(x) ifelse(x >=5, 1, 0)
+test_codes <- c("basil blue")
+reverse_code <- function(x, max_value = 6, min_value = 1){
+  (min_value + max_value) - x
+}
+
+# compute the composite aim score
+# start by calling append_scales to derive the construct-wise scales
+rd <- responses %>%
+  # reverse code the identity threat items. (In C-SET 2020 this will no longer be necessary)
+  mutate(
+    idsafety_judged = reverse_code(idthreat_judged),
+    idsafety_evaluated = reverse_code(idthreat_evaluated),
+    idsafety_surprised = reverse_code(idthreat_surprised)
+  ) %>%
+  scale_computation$append_scales(., scale_vars, add_z_score = FALSE) %>%
+  # compute the "is_good" values. (Note that this assumes all constructs
+  # have a good range of 5+. This is hard-coded (see is_good above) rather 
+  # than using the items config because that seemed easier but if the good
+  # range ever changes, this will have to be updated)
+  mutate_at(composite_metrics, .funs = list("is_good" = is_good)) %>%
+  # also filter out test data
+  dplyr::filter(!code %in% test_codes) %>%
+  # and assign a participation ordinal value to participants so that we can track
+  # change over time
+  group_by(participant_id) %>%
+  arrange(modified) %>%
+  mutate(survey_ordinal = 1:n()) %>%
+  ungroup()
+
+# get that composite aim! (There's probably a tidyverse way to do this but I'm too lazy)
+rd$composite_aim <- apply(
+  rd[composite_metrics %+% "_is_good"],
+  1,
+  function(x) ifelse(all(x == 1), 1, 0)
+)
+
+# sanity check that all items are now coded the right way
+zero_corrs <- cor(rd[scale_vars$var_name], use = "pairwise.complete.obs")
+if(any(zero_corrs < 0)){
+  util.warning("negative correlations were found among survey items. This could " %+%
+                "indicate that items have not been reverse-coded.")
+}
+
+# code the demographic vars for analyses of the first observation only:
+rd$race_disadv <- apply(rd[disadv_race], 1, function(x) any(x, na.rm = T))
+rd$race_blank <- apply(rd[c(adv_race, disadv_race)], 1, function(x) all(util$is_blank(x)))
+rd$race_disadv[rd$race_blank] <- NA
+rd$race_disadv <- ifelse(rd$race_disadv, "Struct. Disadv. Race", "Struct. Adv. Race")
+
+rd$gender_disadv <- ifelse(rd$gender %in% c("female", "other"), "Female/non-binary", "Male")
+rd$gender_disadv[util$is_blank(rd$gender)] <- NA
+
+# @smriti get this to work & add to cross tab.
+fin_stress_cols <- "fin_insecure_" %+% 1:4
+rd$fin_stress <- "Low Fin. Stress"
+rd$fin_stress[rd$food_insecure %in% c(1, 2)] <- "High Fin. Stress"
+rd$fin_stress[
+  apply(rd[fin_stress_cols], 1, function(x) any(x, na.rm = T))
+] <- "High Fin. Stress"
+
+# @smriti compute sensibly labeled binary variables for transfer status and first gen
+# and see how these look in the cross-tab
+
+```
+
+# Introduction
+
+This document summarises analyses to establish baseline information for proposed
+aims metrics. The proposed aim is as follows: 
+
+>"We will increase the percentage of students experiencing positive learning conditions from X% to Y%, with a 0% disparity score between historically best and least well-served students."
+
+The analyses in this document are to 
+
+1. Check whether the proposed aims metric as currently formulated makes sense given the data, or whether a different formulation might be more viable.
+2. Inform what "X%" and "Y%" should be, and 
+3. Sanity check that the 0% experience gap makes sense along a number of demographic variables.
+4. Propose a definition of "historically best and least well-served students."
+
+# Analyses
+
+All data analyses currently reflect ALL C-SET participation through May 28, 2020.
+
+
+## Q: What is the baseline value of the proposed aims metric?
+
+A: In this sample, it was 37% which is honestly higher than I expected.
+
+```{r}
+
+rd %>%
+  dplyr::filter(survey_ordinal %in% 1) %>%
+  summarise(
+    `Percent in Good Range` = round(mean(composite_aim, na.rm = T) *100, 0) %+% "%",
+    `Total in Good Range` = as.integer(sum(composite_aim, na.rm = T)),
+    `N Students Surveyed` = n()
+  ) %>%
+  xtable() %>%
+  print()
+
+```
+
+## Q: How does it vary as a function of demographic variables?
+
+```{r}
+# @smriti this is the cross-tab. I'd like to see what it looks like with 
+# financial stress, and possibly the other demographic vars (transfer and 
+# first-gen). Though this is probably slicing too thin, let's see what the 
+# full cross-tab looks like & play around with it a bit so we can decide how
+# to structure. 
+rd %>%
+  dplyr::filter(
+    survey_ordinal %in% 1,
+    !is.na(race_disadv),
+    !is.na(gender_disadv),
+    !is.na(fin_stress)
+  ) %>%
+  select(participant_id, race_disadv, gender_disadv, fin_stress, composite_aim) %>%
+  melt(measure.vars = "composite_aim") %>%
+  group_by(race_disadv, gender_disadv) %>%
+  summarise(
+    `Percent in Good Range` = round(mean(value, na.rm = T) *100, 0) %+% "%",
+    `Total in Good Range` = as.integer(sum(value, na.rm = T)),
+    `N Students Surveyed` = n()
+  ) %>%
+  xtable() %>%
+  print()
+
+```
+
+
+## Q: How should we define "least well served" in our aims statement?
+
+```{r}
+# this section will probably just be text
+
+```
+
+## Q: What student experiences specifically should we focus our change ideas on?
+
+```{r}
+# @smriti plot % good with ggplot where x = construct, fill = demographic square, and 
+# y = % good
+
+```
+
+
+
+```{r, warning=FALSE}
+# dont' need to print this but if anybody asks, all alphas > .8
+
+scales <- unique(scale_vars$scale)
+alphas <- data.frame(scale = scales, alpha = NA, mean = NA, sd = NA)
+
+for(scale in scales){
+  vars <- scale_vars$var_name[scale_vars$scale %in% scale]
+  alph <- psych::alpha(rd[vars])
+  alphas$alpha[alphas$scale %in% scale] <- alph$total$raw_alpha
+}
+
+```

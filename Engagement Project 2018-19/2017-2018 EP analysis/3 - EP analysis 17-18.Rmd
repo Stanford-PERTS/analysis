@@ -1,0 +1,177 @@
+---
+title: "EP analysis 17-18.Rmd"
+author: "Daniel Greene"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  pdf_document:
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+  html_document:
+    fig_caption: yes
+    fig_height: 7
+    fig_width: 9
+    toc_depth: 2  
+---
+
+# Summary
+
+This document analyzes relationships between student learning conditions (LCs) and engagement for the Engagement Project in the 2017-2018 school year. It is primarily intended to test hypotheses for replication in the 2018-2019 dataset.
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(message = FALSE,
+                      warning = FALSE)
+
+############### USER-DEFINED INPUTS #####################################
+
+general_data_folder_crypt_path <- "old 2017-2018 EP data"
+input_data_crypt_path <- "Data for 2018-2019 EP analysis/old 2017-2018 EP data/3 - EP 2017-2018 clean data ready for analysis.csv"
+
+```
+
+```{r, results='hide', echo=FALSE}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+options(xtable.comment = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    library(tidyverse)
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    gymnast_install()
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(scales)
+library(corrplot)
+
+
+# Set "today" - by default, use the real today
+TODAY <- lubridate::ymd(Sys.Date())
+
+```
+
+```{r, echo=FALSE}
+
+############### LOAD DATA #####################################
+
+d <- util.find_crypt_paths(list(a = input_data_crypt_path))$a %>%
+  read.csv()
+
+# Final factor-setting
+d$race <- relevel(factor(d$race), ref = "White & Asian")
+d$gender <- relevel(factor(d$gender), ref = "Female")
+
+# Create first-to-last df for H2
+# And drop all rows where survey_ordinal_ftl == 0, because they are students with just one observation
+d_ftl <- d %>%
+  arrange(student_id, survey_ordinal) %>%
+  group_by(student_id) %>%
+  summarise(survey_ordinal_ftl = last(survey_ordinal) - first(survey_ordinal),
+            effort_ftl = last(effort) - first(effort),
+            comb_lc_score_ftl = last(comb_lc_score) - first(comb_lc_score),
+            first_comb_lc_score = first(first_comb_lc_score),
+            gender = first(gender),
+            race = first(race),
+            prior_gpa = first(prior_gpa),
+            class_id = first(class_id),
+            teacher_id = first(teacher_id),
+            team_id = first(team_id)) %>%
+  filter(survey_ordinal_ftl > 0)
+
+
+# ds.summarize_by_column(d)
+
+
+```
+
+# Correlation table
+
+```{r, fig.height=5}
+
+correlation_vars <- c("comb_lc_score", "effort", "expected_grade",
+                      "prior_gpa", "comb_lc_score_classmates")
+
+cor( d[, correlation_vars], use="pairwise" ) %>% 
+    corrplot( type="lower", method = "number", tl.col = "black")
+
+```
+
+
+# H1a: Combined LC score predicts self-reported effort.
+
+```{r}
+
+summary(lmer(effort ~ comb_lc_score + gender + race + prior_gpa + 
+               ( 1 | student_id ) + ( 1 | class_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d))
+
+```
+
+H1a confirmed: Combined LC score does predict concurrent self-reported effort, even controlling for gender and race. The LMER model ran normally.
+
+# H1b: Combined LC score predicts self-reported expected grade.
+
+```{r}
+
+summary(lmer(expected_grade ~ comb_lc_score + gender + race + prior_gpa +
+               ( 1 | student_id ) + ( 1 | class_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d))
+
+```
+
+H1b confirmed: Combined LC score does predict concurrent self-reported expected grade. The full LMER model ran normally.
+
+
+# H2: First-to-last-observation changes in students’ LCs predict corresponding changes in effort.
+
+```{r}
+
+# Using FTL model:
+# Model failed to converge with max|grad| = 0.0183099 (tol = 0.002, component 1)
+# summary(lmer(effort_ftl ~ comb_lc_score_ftl + first_comb_lc_score +
+#                gender + race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d_ftl))
+
+# Model runs after removing class_id
+summary(lmer(effort_ftl ~ comb_lc_score_ftl + first_comb_lc_score +
+               gender + race + prior_gpa +
+               ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d_ftl))
+
+
+```
+
+H2 confirmed with a simpler model obtained after removing class-id random effect to achieve model convergence (probably because class and teacher overlap a lot). Changes in combined LC score predict corresponding changes in self-reported effort, even after controlling for first LC score, survey ordinal, and prior GPA.
+
+# H3: Students’ personal perceptions of LCs are correlated with the LCs of their classmates.
+
+```{r}
+
+summary(lmer(comb_lc_score ~ comb_lc_score_classmates + gender + race + prior_gpa +
+               ( 1 | student_id )  + ( 1 | class_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d))
+
+```
+
+H3 confirmed: Combined LC score is strongly predicted by the average combined LC score of one's classmates. The full LMER model ran normally.
+

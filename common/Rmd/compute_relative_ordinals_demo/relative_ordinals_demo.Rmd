@@ -1,0 +1,168 @@
+---
+title: "Compute Relative Ordinals Demo"
+author: "Sarah Gripshover"
+date: "October, 2016"
+output: 
+  html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: https://raw.githubusercontent.com/PERTS/gymnast/master/Rmd/rmd_styles.css
+---
+
+
+# Purpose
+
+The `compute_relative_ordinals` module in perts_analyses is used to generate 
+ordinal values relative to a reference value. The main use case is computing 
+the number of terms (or years, etc.) that have passed since 
+each subject in a dataset completed 
+an intervention.
+
+# Load Gymnast 
+```{r, results='hide', message=FALSE, warning=FALSE}
+
+options(stringsAsFactors = FALSE)
+github_base_path <- "~/Sites/perts_analyses/common/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_graphing.R", chdir = TRUE)
+}, error = function(e){
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_legacy.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_qualtrics_cleaning.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_graphing.R")
+})
+
+source("~/Sites/perts_analyses/common/compute_relative_ordinals.R")
+
+opts_chunk$set(results = "asis")
+
+```
+
+# Load sample data
+
+```{r}
+
+demo_folder <- github_base_path %+% "Rmd/compute_relative_ordinals_demo/"
+
+d1 <- read.csv(demo_folder  %+% "sample_data1.csv")
+reference_ordinals1 <- read.csv(demo_folder %+% "reference_ordinals1.csv")
+
+d2 <- read.csv(demo_folder  %+% "sample_data2.csv")
+reference_ordinals2 <- read.csv(demo_folder %+% "reference_ordinals2.csv")
+timetable2 <- read.csv(demo_folder %+% "time_table_2.csv")
+
+```
+
+# Example 1: an ordered time variable
+
+## check out the data
+
+`d1` is a data.frame with an ordinal time variable. In most cases, 
+this will be a variable corresponding to academic terms or academic 
+years. In `d1`, the term variable has a year component and an 
+ordinal component within the year (e.g., "2014_1" is the first 
+term in AY 2014-15).
+
+```{r}
+util.print_pre(d1)
+```
+
+`reference_ordinals` is a data.frame with 1 row per id value 
+that shows what each subject's reference time is. This reference 
+time usually corresponds to the term in which students completed 
+an intervention activity, or matriculated.
+
+```{r}
+util.print_pre(reference_ordinals1)
+```
+
+`compute_relative_ordinals` can then be used to assign an ordinal value 
+for all the values in the term column, relative to each particular subject's 
+reference time. Zero corresponds to the time value in which the reference 
+event took place for each subject, negative numbers correspond to times 
+before the reference event, and positive numbers correspond to times after 
+the reference event.
+
+## compute relative ordinals
+
+`compute_relative_ordinals` takes 4 arguments:
+
+* `time_column` is a vector of data representing
+some time-dependent thing (e.g., terms, years). 
+In this case is the `term` column in `d1`
+* `id_column` is a vector of the same length as `time_column` 
+indicating subject id values (e.g., student ID). In this case, 
+it's the `subject` column in `d1`.
+* `subject_reference_time_table` is a 2-column table where one
+field contains unique id values and the other contains values
+of time_column relative to which the relative ordinals
+should be computed (e.g., the name
+of the term in which an intervention took place.) The
+column names of this table MUST be 'id' and 'reference_time'. In 
+this case, it's the `reference_ordinals1` data.frame.
+* `ordered_timeline` is a vector containing ALL of the expected 
+values in `time_column`, sorted in ascending order of time. In this 
+case, we create `ordered_timeline` below as `timeline1`.
+
+```{r}
+d1$rel_term <- compute_relative_ordinals(d1$term, d1$subject, reference_ordinals1)
+util.print_pre(d1)
+```
+
+You can then go on to do whatever you want, for example, computing a 
+"pre-intervention" column:
+
+```{r}
+d1$pre <- d1$rel_term < 0
+util.print_pre(d1)
+```
+
+Note that becuase the inputs to `compute_relative_terms` are vectors, rather 
+than, say, column name strings and a data.frame, it can be used seamlessly
+in dplyr pipes:
+
+```{r}
+d1 %>%
+    mutate(rel_term_dplyr = compute_relative_ordinals(term, subject, reference_ordinals1)) %>%
+    util.print_pre()
+```
+
+# Example 2: an un-ordered time variable
+
+## An un-sorted time variable
+
+Sometimes you have schools with whacky terms that just aren't sortable.
+For example, Kaplan had some crazy term labels like 1401B and 1401A, 
+where 1401B comes BEFORE 1401A. For a case like this, you'd want 
+to use the `ordered_timeline` parameter.
+
+First, note that we made a .csv that gives each term label and its 
+ordinal value in the Kaplan scheme:
+
+```{r}
+util.print_pre(timetable2)
+```
+
+## Check out the data
+
+And now let's look at the data:
+
+```{r}
+util.print_pre(d2)
+util.print_pre(reference_ordinals2)
+```
+
+## Compute relative terms
+
+We can compute relative terms by using the timetable as a timeline. 
+We'll just convert the 2-column table to a single, sorted vector first.
+
+```{r}
+# first, sort the values into a timeline
+timeline2 <- timetable2$term_code[timetable2$term_ordinal]
+d2$rel_term <- compute_relative_ordinals(d2$term, d2$subject, reference_ordinals2, timeline2)
+util.print_pre(d2)
+```

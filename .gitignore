@@ -1,0 +1,81 @@
+# History files
+.Rhistory
+.Rapp.history
+
+# Session Data files
+.RData
+
+# Example code in package build process
+*-Ex.R
+
+# Output files from R CMD build
+/*.tar.gz
+
+# Output files from R CMD check
+/*.Rcheck/
+
+# RStudio files
+.Rproj.user/
+
+# produced vignettes
+vignettes/*.html
+vignettes/*.pdf
+
+# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
+.httr-oauth
+
+# knitr and R markdown default cache directories
+/*_cache/
+/cache/
+
+# Temporary files created by R markdown
+*.utf8.md
+*.knit.md
+*.tex
+
+# Sublime
+*.sublime-workspace
+*.sublime-project
+
+# MacOS
+.DS_Store
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Data Files
+
+*.json
+*.xls
+*.xlsx
+*.dat
+
+# Images and reports from the engagement project
+/engagement_diagnostic/*.png
+/sse_reports/reports/
+/sse_reports/sse_report.html
+/sse_reports/*.png
+/cc_full_datasets/*.html
+/cg19_reports/*.html
+/engagement_diagnostic/reports/
+
+# RServe
+/rserve/common
+
+EP dashboard/EP_Dashboard_2018-2019.pdf
+.Rproj.user
+Neptune dashboard/Neptune_Dashboard_2018-2019.log
+Neptune dashboard/Neptune_Dashboard_2018-2019.pdf
+Engagement Project 2018-19/2018-2019 EP analysis/4_-_EP_analysis_18-19.pdf
+
+Empathic Discipline/Empathic_Discipline_Masterfile_files/**
+Neptune dashboard/Neptune-Dashboard-2018-2019.log
+Neptune dashboard/Neptune-Dashboard-2018-2019.pdf
+Engagement Project 2018-19/2018-2019 EP analysis/4_-_EP_analysis_18-19.log
+Engagement Project 2018-19/2018-2019 CL EP analysis /2_-_2019_CL_EP_analysis.log
+sql_connect.tmp.cnf
+cb17_reports/cb19/reports/*
+
+*.html
+*.pdf

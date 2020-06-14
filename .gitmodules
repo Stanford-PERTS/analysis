@@ -1,0 +1,3 @@
+[submodule "gymnast"]
+	path = gymnast
+	url = git@github.com:PERTS/gymnast

@@ -1,0 +1,6 @@
+---
+title: "initial_checks"
+author: "Rumen"
+date: "August 15, 2017"
+output: html_document
+---

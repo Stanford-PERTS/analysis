@@ -1,0 +1,530 @@
+---
+title: "EP Graph Metric Exploration"
+author: "Daniel Greene"
+date: "1/2/2019"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+  html_document:
+    fig_caption: yes
+    fig_height: 7
+    fig_width: 9
+    toc: yes
+    toc_depth: 2
+---
+
+# Introduction
+
+This internal document outlines design considerations for how we should improvement in learning conditions for the Engagement Project.
+
+# Summary
+
+The graphs below suggest that many classes are improving in at least some LCs by 10% or more. We could potentially highlight this improvement by cutting one less-sensitive question from each LC, but changing metrics or aggregating individual questions into LCs may not matter much. Switching to unimputed data may slightly increase average visible improvement with the cost of much more variability.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+```
+
+```{r, results='hide'}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+options(xtable.comment = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    library(tidyverse)
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    gymnast_install()
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+
+repair_pdds <- function(in_cell) {
+  # it seems that in some cases the pdds are wrong
+  # instead of __pdd__ we have _pdd__
+  out_cell <- gsub("([^_])_pdd", "\\1__pdd", in_cell)
+  return (out_cell)
+}
+repair_2nd_row <- function(in_df) {
+  # it seems that in some cases the pdds are wrong
+  # instead of __pdd__ we have _pdd__
+  in_df[1,] <- in_df[1,] %>% apply (., 1, function(x) repair_pdds(x))
+  return (in_df)
+}
+
+extract_number <- function(vec) {
+  # extract the first matching number from a mixed number-letter string vector.
+  str_extract(vec, "-?[[:digit:]]+") %>% as.numeric()
+}
+
+
+
+```
+
+```{r, results='hide'}
+
+### LOAD DATA
+
+# set working directory to the location of this script
+RMD_BASE_PATH       <- "~/Sites/analysis/EP dashboard/"
+setwd(RMD_BASE_PATH)
+# setwd("~/Sites/analysis/rserve/")
+
+# find RDS files in the crypt
+data_paths <- util.find_crypt_paths(list(output_data_path = "EP dashboard data 2018-2019/metascript_output_workspace.rds"))
+
+# Load data into workspace
+output_data_list <- readRDS(data_paths$output_data_path)
+
+# We only need to keep a few things from the output data
+keep <- c("data_cat_not_imputed",
+          "data_cat_imputed",
+          "class_tbl",
+          "items",
+          "team_tbl",
+          "triton_tbl",
+          "user_tbl")
+output_data_list_keep <- output_data_list[keep]
+list2env(output_data_list_keep, globalenv())
+rm(output_data_list, output_data_list_keep)
+
+# we will work with data_cat_not_imputed a lot - rename it for convenience
+d <- data_cat_not_imputed
+di <- data_cat_imputed
+
+
+# Also load 4th/5th grade teachers to cut
+elementary_teachers_path <- util.find_crypt_paths(list(a =
+                                                         "EP dashboard data 2018-2019/elementary_teachers.csv"))
+elem_teachers <- read.csv(elementary_teachers_path$a)
+
+```
+
+
+```{r, results='hide'}
+
+###### Misc data cleaning
+
+#### Defining two-week intervals
+#### (note: this code is currently not used, will be cut once we get cycles properly implemented)
+
+# create two-week date interval
+week_start <- sort(unique(d$week_start))
+two_week_interval <- week_start
+odd_indices <- seq(1, length(two_week_interval), by = 2)
+even_indices <- seq(2, length(two_week_interval), by = 2)
+if(length(odd_indices) > length(even_indices)) {
+  odd_indices <- odd_indices[1:(length(odd_indices)-1)]
+}
+two_week_interval[even_indices] <- two_week_interval[odd_indices]
+weeks_df <- data.frame(week_start = week_start,
+                       two_week_interval = two_week_interval)
+
+d <- merge(d,
+            weeks_df,
+            by = "week_start",
+            all.x = TRUE, all.y = FALSE)
+rm(weeks_df)
+
+# Define "marginalized" student status:
+# "Blk, Lat, & Nat" and/or ELL
+d$marginalized <- d$race_cat %in% "Blk, Lat, & Nat" |
+  d$ELL_status %in% "Eng. Learner"
+
+
+```
+
+```{r, results='hide'}
+
+###### Basic cleaning
+
+# cut the testing data!
+d <- filter(d, testing %in% "")
+di <- filter(di, testing %in% c("", NA))
+
+# cut the elementary school teacher data
+d <- d[!d$teacher_email %in% elem_teachers$teacher_email, ]
+di <- di[!di$teacher_email %in% elem_teachers$teacher_email, ]
+
+```
+
+
+```{r, results='hide'}
+
+##### Fidelity setup
+
+# Get each student's most recent individual fidelity scores for each class, then agg to class level
+all_fidelities <- d %>%
+  arrange(userID, class_id, week_start) %>%
+  group_by(class_id, userID) %>%
+  summarise(team_name = first(team_name),
+            class_name = first(class_name),
+            teacher_email = first(teacher_email),
+            most_recent_tuq = last(na.omit(teacher_use_qs)),
+            most_recent_tuq_good = most_recent_tuq >=4,
+            most_recent_honesty = last(na.omit(honest_comfort)),
+            most_recent_honesty_good = most_recent_honesty == 2,
+            high_fidelity = most_recent_tuq_good & most_recent_honesty_good) %>%
+  summarise(team_name = first(team_name),
+            class_name = first(class_name),
+            teacher_email = first(teacher_email),
+            class_tuq = mean(most_recent_tuq_good, na.rm = T),
+            class_honesty = mean(most_recent_honesty_good, na.rm = T),
+            high_fidelity_class = (class_tuq >= .8) & (class_honesty >= .8))
+
+high_fidelity_classes <- all_fidelities[all_fidelities$high_fidelity_class, "class_id"] %>%
+  unlist()
+
+
+```
+
+
+```{r, results='hide'}
+
+### Basic deltas:
+# Take unimputed survey data, group_by student-class,
+# get delta, avoid NAs and single measurements
+deltas <- d %>%
+  arrange(userID, class_id, week_start) %>%
+  rowwise() %>%
+  mutate(mw = mean(c(mw1_2, mw2_2, mw3_2), na.rm = T),   # create "scales"
+         fg = mean(c(fg1_2, fg2_2, fg3_2), na.rm = T),
+         tc = mean(c(tc1_2, tc2_2, tc4_2), na.rm = T)) %>%
+  group_by(userID, class_id) %>%
+  summarise(
+            # student-level stuff:
+            team_id = first(team_id),
+            race_cat = first(race_cat),
+            race6 = first(race6),
+            marginalized = first(marginalized),
+            most_recent_tuq = last(na.omit(teacher_use_qs)),
+            most_recent_honesty = last(na.omit(honest_comfort)),
+            most_recent_tuq_good = most_recent_tuq >= 4,
+            most_recent_honest_good = most_recent_honesty == 2,
+            high_fidelity = most_recent_tuq_good & most_recent_honest_good,
+            # engagement:
+            first_eng = first(na.omit(eng_1)), # ignore NA values throughout delta calculation
+            last_eng = last(na.omit(eng_1)),
+            delta_eng = last_eng - first_eng,
+            n_eng = length(na.omit(eng_1)),
+            # mw:
+            first_mw = first(na.omit(mw)),
+            last_mw = last(na.omit(mw)),
+            delta_mw = last_mw - first_mw,
+            n_mw = length(na.omit(mw)),
+            # fg:
+            first_fg = first(na.omit(fg)),
+            last_fg = last(na.omit(fg)),
+            delta_fg = last_fg - first_fg,
+            n_fg = length(na.omit(fg)),
+            # tc:
+            first_tc = first(na.omit(tc)),
+            last_tc = last(na.omit(tc)),
+            delta_tc = last_tc - first_tc,
+            n_tc = length(na.omit(tc)))
+# NA out any apparent "deltas" that only come from a single measurement
+deltas$delta_eng <- ifelse(deltas$n_eng == 1, NA, deltas$delta_eng)
+deltas$delta_mw <- ifelse(deltas$n_mw == 1, NA, deltas$delta_mw)
+deltas$delta_fg <- ifelse(deltas$n_fg == 1, NA, deltas$delta_fg)
+deltas$delta_tc <- ifelse(deltas$n_tc == 1, NA, deltas$delta_tc)
+
+# Add in class-level fidelity info
+deltas <- merge(deltas,
+                all_fidelities[, c("class_id", "high_fidelity_class")],
+                by = "class_id",
+                all.x = TRUE,
+                all.y = FALSE)
+```
+
+```{r, results='hide'}
+
+##### Helper functions for graph-making
+
+
+# helper: define shared multi-surveyed classes from non-imputed data
+shared_classes <- intersect(unique(d$class_id), unique(di$class_id)) # 171 shared classes
+multi_surveyed_classes <- d %>%
+  group_by(class_id) %>%
+  summarise(n_unique_weeks = length(unique(week_start))) %>%
+  filter(n_unique_weeks > 1) %>%
+  select(class_id)
+shared_multi_surveyed_classes <- intersect(shared_classes,
+                                       multi_surveyed_classes$class_id)
+
+
+# helper function to create deltas
+create_graphable_deltas <- function(data) {
+  
+  # start with data from shared high-fidelity multi-surveyed classrooms only!
+d_high_fidelity_classes <- data %>%
+  filter(class_id %in% shared_multi_surveyed_classes)
+
+# class_id %in% high_fidelity_classes,    <-- NOT USED
+
+# Make student-lc-question-time level df with class_id, student_id, lc (mw, tc, fg),
+# question_ordinal (1, 2, 3, or mean), week, value
+dm <- d_high_fidelity_classes %>%
+  melt(id.vars = c("team_id", "class_id", "userID", "week_start"),
+       measure.vars = c("mw1_2", "mw2_2", "mw3_2",
+                        "fg1_2", "fg2_2", "fg3_2",
+                        "tc1_2", "tc2_2", "tc4_2")) %>%
+    mutate(lc = substr(variable, 0, 2),
+           question_ordinal = substr(variable, 3, 3)) %>%
+  # consider tc4 ordinal 3
+  mutate(question_ordinal = ifelse(question_ordinal %in% 4, 3, question_ordinal)) %>%
+  select(-variable) %>%
+  filter(!is.na(value))
+# make means and rbind them back in as a question_ordinal
+dm_question_means <- dm %>%
+  group_by(team_id, class_id, userID, week_start, lc) %>%
+  summarise(value = mean(value, na.rm = TRUE)) %>%
+  mutate(question_ordinal = "mean") %>%
+  select(team_id, class_id, userID, week_start, value, lc, question_ordinal)
+dm <- bind_rows(dm, dm_question_means)
+
+dm <- arrange(dm, team_id, class_id, userID, week_start, lc, question_ordinal)
+
+# aggregate to class-lc-question-week level with different agg metrics,
+# then melt to distinguish the metrics
+dm_class_week <- dm %>%
+  group_by(team_id, class_id, lc, question_ordinal, week_start) %>%
+  summarise(mean_val_scaled = rescale(mean(value, na.rm = TRUE), from = c(1, 7)),
+            pct_above_5 = sum(value >= 6, na.rm = TRUE) / length(value),
+            pct_above_4 = sum(value >= 5, na.rm = TRUE) / length(value),
+            pct_above_5_minus_pct_below_3 = 
+              (sum(value >= 6, na.rm = TRUE) - sum(value <= 2, na.rm = TRUE)) / 
+                length(value)) %>%
+  melt(id.vars = c("team_id", "class_id", "lc", "question_ordinal", "week_start")) %>%
+  rename(metric = variable)
+
+# aggregate to class-lc-question level with deltas of absolute 
+# pct improvement from first to last class observation on different metrics
+dm_class_deltas <- dm_class_week %>%
+  arrange(team_id, class_id, lc, question_ordinal, week_start, metric) %>%
+  group_by(team_id, class_id, lc, question_ordinal, metric) %>%
+  summarise(n_weeks = n(),
+            abs_change = (last(value)-first(value)))
+  
+return(dm_class_deltas)
+
+}
+
+
+# Create deltas objects for both imp and non-imp data
+# (shared actually-multi-surveyed classes only!)
+non_imp_deltas <- create_graphable_deltas(d)
+imp_deltas <- create_graphable_deltas(di)
+
+
+```
+
+# Exploring classroom deltas
+
+We see apparent improvement in within-student LC scores for FG and MW for high-fidelity classes with non-imputed data (below). But Lauren reports that teachers don't seem to see improvement in their report graphs. Why?
+
+```{r, warning = FALSE}
+
+# Makin some graphs:
+
+## Melt and restructure data
+measure_vars <- names(deltas)[grep("(first_)|(last_)", names(deltas))]
+dm <- melt(deltas,
+           id.vars = c("high_fidelity_class", "n_tc", "n_mw", "n_fg", "n_eng"),
+           measure.vars = measure_vars) %>%
+  mutate(is_first = grepl("first_", variable),
+         is_last = grepl("last_", variable),
+         position = ifelse(is_first, "first", "last"),
+         variable_cleaned = gsub("(first_)|(last_)", "", variable)) %>%
+  select(-is_first, -is_last, -variable) %>%
+  rename(variable = variable_cleaned)
+# Cut rows with only one measurement for that variable
+# dm <- filter(dm,
+#              !(variable == "eng" & n_eng == 1) &
+#              !(variable == "tc" & n_tc == 1) &
+#              !(variable == "mw" & n_mw == 1) &
+#              !(variable == "fg" & n_fg == 1))
+# Cut rows with no measure or no fidelity
+dm <- filter(dm, !is.na(value) & !is.na(high_fidelity_class))
+# clean up
+dm <- select(dm, -starts_with("n_"))
+dm$variable <- util.recode(dm$variable,
+                           c("eng", "fg", "mw", "tc"),
+                           c("Engagement", "Feedback for Growth", "Meaningful Work", "Teacher Caring"))
+
+# Graph
+ggplot(dm, aes(position, value,
+               group = high_fidelity_class,
+               color = high_fidelity_class)) +
+  geom_line(stat = "summary", fun.y = "mean", size = 1) +
+  ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+                                geom="errorbar", width=.1,
+                                fun.args=list(conf.int=.95)) +
+  facet_grid(. ~ variable) +
+  scale_y_continuous(breaks=seq(1, 7, .5)) +
+  scale_color_brewer(palette = "Set1") +
+  xlab("Time of Measurement") +
+  ylab("Value") +
+  ggtitle("Changes in individual student LC ratings, first-last measure")
+
+```
+
+Why don't teachers notice improvement? Some hypotheses (not mutually exclusive):
+
+1. Improvement is only really happening with a few classes
+2. Improvement is masked by class-level and/or team-level variability, and is only visible when aggregating the entire sample
+3. Improvement is happening within regions of the scale that are not currently captured by the "percent of students above a 5" metric used for the reports
+4. Teachers see graphs for individual questions, but improvement is only visible when aggregating individual questions to the LC-level (which presumably reduces noise)
+5. Imputation dilutes the evidence of improvement by carrying forward unchanging scores from students who were only surveyed once
+6. Improvement really IS happening, teachers just don't visually notice it - e.g. because it was a one-time increase rather than a gradual stepwise increase, or because teachers don't appreciate the significance of a 10% improvement
+
+The last hypothesis is difficult to evaluate here, but to collect evidence for the first five hypotheses, we graph smoothed histograms of *class-level* changes in various scores. We first filter the data as follows:
+
+* We only consider "high fidelity classes" (average most recent TUQ and honesty scores both > 80%), because that is where we expect to see improvement.
+* We only consider classes that have run surveys in at least two distinct weeks, because improvement is meaningless otherwise. (Notably, all of the individual *students* in the class could be only surveyed once if there is a lot of turnover between survey administrations.)
+
+## How much improvement is happening in classes, and under what metrics is it visible?
+
+We first examine hypotheses 1-3 by graphing classroom-level deltas in learning conditions using non-imputed data. For simplicity, we look at aggregated deltas for learning conditions, rather than deltas for individual questions. We also consider four different possible metrics for judging improvement: the standard "percent above 5", "percent above 4", "percent above 5 minus percent below 3", and a simple mean value of the LC itself (rescaled to go from -1 to 1 to match the other metrics).
+
+```{r}
+
+ggplot(filter(non_imp_deltas, question_ordinal %in% "mean"),
+       aes(abs_change, color = metric)) +
+  geom_freqpoly(alpha = .5) +
+  facet_grid(lc ~ .) + 
+  xlim(-1, 1) + 
+  scale_x_continuous(breaks = seq(-1, 1, .1)) +
+  xlab("Absolute change in metric") +
+  ylab("Number of classes") +
+  ggtitle("Classroom deltas, non-imputed data, across metrics")
+
+```
+
+Observations:
+
+* Deltas are roughly centered around zero. Improvement is not dramatic.
+* FG shows the most improvement, MW shows a little, and TC not at all (it's at ceiling). This matches the individual-student line graphs.
+* A few dozen classes appear to be seeing significant improvement in LCs in the 20%-plus range! Awesome! *This addresses hypotheses 1 and 2.*
+* Comparing metrics, it looks like the "mean value" metric does a bad job of showing improvement, while the other metrics are more or less the same. *This addresses hypothesis 3.* There appears to be no need to change our "percent above 5" metric (unless we see different metric behavior under different conditions).
+
+## How much do individual questions vs. aggregated LCs matter?
+
+To address this question, we make a similar graph as before, but visualize individual LC questions along with their mean. We use the "percent above 5" metric to evaluate performance. We also graph results using a smoothed density plot to more easily distinguish differences.
+
+```{r}
+
+ggplot(filter(non_imp_deltas, metric %in% "pct_above_5"),
+       aes(abs_change, color = question_ordinal)) +
+  geom_density(alpha = .5, adjust = 2) +
+  facet_grid(lc ~ .) + 
+  xlim(-1, 1) + 
+  scale_x_continuous(breaks = seq(-1, 1, .1)) +
+  xlab("Absolute change in metric") +
+  ylab("Relative frequency") +
+  ggtitle("Classroom deltas, non-imputed data, across LC questions")
+
+```
+
+It looks like there is some variability here and we could potentially improve the user experience by dropping questions that aren't changing. This might be FG 2, MW 2, and TC 1. *This addresses hypothesis 4.*
+
+```{r, results='hide'}
+
+### Checking alphas of LCs
+
+# Get most recent responses
+d_most_recent <- d %>%
+  arrange(team_id, class_id, userID, week_start) %>%
+  group_by(team_id, class_id, userID) %>%
+  filter(week_start %in% last(week_start))
+
+# what happens to alphas if we drop various questions?
+psych::alpha(d_most_recent[, c("fg1_2", "fg2_2", "fg3_2")]) # from .75 to .66 if dropping #2
+psych::alpha(d_most_recent[, c("mw1_2", "mw2_2", "mw3_2")]) # from .86 to .76 if dropping #2
+psych::alpha(d_most_recent[, c("tc1_2", "tc2_2", "tc4_2")]) # from .81 to .82 if dropping #1
+
+
+```
+
+Examining alphas of the LC scales, we see that:
+
+* If we drop FG2, the FG alpha will go from .75 to .66.
+* If we drop MW2, the MW alpha from .86 to .76.
+* If we drop TC1, the TC alpha will INCREASE from .81 to .82!
+
+
+## How much does imputation matter?
+
+We currently impute missing student data forward, and we impute it backward up to the first real entry in order to fill gaps. This is a reasonable guess at missing students' experiences and prevents the graphs from jumping around because of varying classroom composition. But imputation might also mask improvement because it carries forward unchanging scores, even when classroom conditions really are changing. How do the graphs look when we compare imputed to non-imputed data?
+
+```{r}
+
+imp_deltas$imputed <- TRUE
+non_imp_deltas$imputed <- FALSE
+all_deltas <- bind_rows(imp_deltas, non_imp_deltas)
+
+ggplot(filter(all_deltas,
+              question_ordinal %in% "mean",
+              metric %in% "pct_above_5"),
+       aes(abs_change, color = imputed)) +
+  geom_freqpoly(alpha = .5) +
+  facet_grid(lc ~ .) + 
+  xlim(-1, 1) + 
+  scale_x_continuous(breaks = seq(-1, 1, .1)) +
+  xlab("Change in percent-of-class-above-5, first to last obs") +
+  ylab("Number of classes") +
+  ggtitle("Classroom deltas, imputed vs. non-imputed data")
+
+
+test <- all_deltas[all_deltas$lc %in% "tc" & all_deltas$imputed %in% TRUE, ]
+test2 <- all_deltas[all_deltas$lc %in% "tc" & all_deltas$imputed %in% FALSE, ]
+
+# Merge to do delta of deltas
+merged_deltas <- merge(select(imp_deltas, -n_weeks),
+                       select(non_imp_deltas, -n_weeks),
+                       by = c("team_id", "class_id", "lc",
+                              "question_ordinal", "metric"),
+                       all = TRUE)
+merged_deltas <- merged_deltas %>%
+  rename(imp_delta = abs_change.x,
+         non_imp_delta = abs_change.y) %>%
+  mutate(non_imp_delta_minus_imp_delta = non_imp_delta - imp_delta)
+
+ggplot(filter(merged_deltas,
+              question_ordinal %in% "mean",
+              metric %in% "pct_above_5"),
+       aes(non_imp_delta_minus_imp_delta)) +
+  geom_freqpoly(alpha = .5) +
+  facet_grid(lc ~ .) + 
+  xlim(-1, 1) + 
+  scale_x_continuous(breaks = seq(-1, 1, .1)) +
+  ggtitle("Differences between non-imp and imp deltas")
+
+
+```
+
+It looks like imputation reduces a lot of variance, and maybe it very slightly reduces improvement. I'm not sure whether this is overall good or not - it looks like there are a fair number of classrooms either way that have at least 10% improvement on LCs.
+

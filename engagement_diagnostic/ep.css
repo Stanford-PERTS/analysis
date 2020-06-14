@@ -1,0 +1,202 @@
+/* This style tag is specific to the features added for #17. It should */
+/* be combined with the main style tag before merging. */
+body {
+  font-size: 12pt;
+  padding: 0;
+  margin: 0 auto;
+}
+.hidden {
+  display: none;
+}
+
+.float-container {
+  overflow: hidden;
+}
+.float-left {
+  float: left;
+}
+.vertical-center {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+.vertical-center > * {
+  margin: 0 10pt;
+}
+
+a button {
+  cursor: pointer;
+}
+
+li {
+  overflow-wrap: break-word;
+}
+.good-stat {
+  color: green;
+  font-size: 20px;
+  font-weight: bold;
+}
+.bad-stat {
+  color: red;
+  font-size: 20px;
+  font-weight: bold;
+}
+#header {
+  top: 0;
+  left: 0;
+  display: flex;
+  justify-content: space-between;
+  position: fixed;
+  width: 100%;
+  z-index: 10;
+  background-color: white;
+}
+#angled-bar {
+  border-top: 35pt solid rgb(55, 164, 231);
+  border-right: 35pt solid transparent;
+  width: 75%;
+}
+.perts-logo {
+  height: 25pt;
+  margin: 5pt 20pt;
+}
+.main-container {
+  max-width: 940px;
+  margin: 35pt auto;
+  padding: 30pt;
+}
+h1.title {
+  margin: 5pt 0;
+}
+h1.super.title {
+  text-transform: uppercase;
+  color: rgb(55, 164, 231);
+  font-size: 18pt;
+}
+h1.sub.title {
+  font-size: 12pt;
+}
+h2 {
+  margin-top: 32pt;
+  margin-bottom: 14pt;
+  font-size: 16pt;
+}
+h3 {
+  color: #555555;
+  font-size: 13pt;
+  margin-bottom: 12pt;
+}
+
+table.display-table,
+table.display-table thead tr {
+  border-color: #d5d5ff;
+}
+table.display-table thead th,
+table.display-table tbody tr,
+table.display-table tbody td {
+  border: none;
+}
+table.display-table#communications-summary-table tbody tr,
+table.display-table#communications-summary-table tbody td {
+  /*border: none;*/
+  background-color: transparent !important;
+}
+
+.stat-row td:first-child {
+  width: 40px;
+}
+.stat-row td:last-child {
+  padding-left: 0;
+}
+
+#participation-table th,
+#participation-table td {
+  text-align: center;
+}
+
+.learning-conditions-assessed {
+  display: flex;
+  justify-content: center;
+  padding: 25pt 0;
+}
+
+.learning-condition-link {
+  margin: 0 20px;
+}
+.learning-condition-link,
+.learning-condition-title {
+  text-align: center;
+  vertical-align: middle;
+  display: block;
+  font-size: 14pt;
+}
+.learning-condition-graphic {
+  height: 80px;
+}
+
+.learning-condition-section {
+  border: 2px solid #0a5794;
+  border-radius: 5pt;
+  padding: 20pt;
+  margin-bottom: 20pt;
+}
+
+figure.ggplot {
+  max-width: 60%;
+  height: auto;
+  margin: 20pt auto;
+}
+
+figure.ggplot figcaption {
+  font-style: italic;
+  margin: 8pt 0;
+  text-align: center;
+  text-transform: capitalize;
+}
+
+figure.ggplot figcaption.interpreting-link {
+  margin: 0;
+  font-size: 8pt;
+}
+
+.responses-wrapper {
+  margin-bottom: 10pt;
+}
+button {
+  padding: 4pt;
+  background-color: #1dadea;
+  border: none;
+  border-radius: 5pt;
+  color: white;
+}
+
+.expand-toggle {
+  margin-left: 20pt;
+}
+
+@media print {
+  @page {
+    margin: 1cm;
+  }
+
+  #header {
+    /* Print the header once at the top of the first page instead of at the */
+    /* top of every page, which is the ressult of position: fixed. We can't */
+    /* make position fixed look right because it doesn't behave as well as */
+    /* @page properties; other content sneaks under it. */
+    position: absolute;
+  }
+
+  figure {
+    page-break-inside: avoid;
+  }
+
+  figure.ggplot {
+    width: 52%;
+  }
+
+  .expand-toggle, .hidden {
+    display: none;
+  }
+
+}

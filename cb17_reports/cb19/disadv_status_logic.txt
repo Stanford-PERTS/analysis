@@ -1,0 +1,20 @@
+
+# disadv_race: Black, Latino, or Native students, defined as:
+## disadv_race.1: t1__demog__identifying_race %in% c(1, 6, 7, 8, 9, 10, 11, 12, 13, 17)
+## alter_OR
+## disadv_race.2: 
+### disadv_race.2.1: t1__demog__identifying_race %in% c(19, NA) 
+### AND 
+### disadv_race.2.2: t1__demog__race %in% c(1, 6, 7, 8, 9, 10, 11, 12, 13, 17) 
+
+
+# disadv_white_educ: First-generation White students, defined as:
+## disadv_education: t1__demog__ed_level_p1 (and t1__demog__ed_level_p2 if exists) < 5 
+## AND  
+## disadv_white
+### disadv_white.1  t1__demog__identifying_race %in% c(14, 15, 16)
+### alter_OR
+### disadv_white.2:
+#### disadv_white.2.1:t1__demog__identifying_race %in% c(19, NA) 
+#### AND 
+#### disadv_white.2.2: t1__demog__race %in% c(14, 15, 16)

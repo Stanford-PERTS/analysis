@@ -1,0 +1,647 @@
+---
+output:
+  html_document:
+    fig_caption: no
+    toc: no
+    theme: spacelab
+    css: https://raw.githubusercontent.com/PERTS/gymnast/master/Rmd/rmd_styles.css
+---
+
+
+
+```{r chunk1, results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+opts_chunk$set(results='asis', eval=TRUE, warning=FALSE, echo=FALSE, message=FALSE, fig.height = 2.5)
+expected_variables <- c("data_wide", "all_items", "org_name",
+                        #"present_metrics", "present_subset_groups", "present_outcomes", "present_lcs",
+                        "MIN_CELL", "DRIVER_GRAPH_COLORS",
+                        "OUTCOME_COLORS", "PROBABILITY_THRESHOLD", "N_COMPLETERS_THRESHOLD", "specific_school_stats_df", "overall_stats", "overall_ggplot")
+
+
+if(!exists("org_name")){
+    org_name <- report_sites[1, "org_name"]
+}
+school_name = org_name
+
+nothing <- lapply(expected_variables, function(var){
+    if(!exists(var)){
+        stop(var %+% " was not passed in!")
+    }
+})
+
+#################################################################################
+############## Create some plotting parameters ################################
+
+plot_title_size <- 12
+panel_margin <- .2
+
+#################################################################################
+######### Create data for graphs and analyses ###################################
+
+# filter data to desired org_name 
+
+# we will not use melted data, so I will create one to preserve the flow
+dw <- data_wide[data_wide$survey_id %in% survey_id, ]
+dm <- dw
+
+dw_incompl <- d_nt_including_incomplete[d_nt_including_incomplete$survey_id %in% survey_id, ]
+
+
+
+#create list from the school specific data frame
+specific_school_stats <- specific_school_stats_df[specific_school_stats_df$survey_id %in% survey_id,] %>%
+  as.list()
+
+ENOUGH_COMPLETERS <-ifelse(specific_school_stats$n_numer >= N_COMPLETERS_THRESHOLD, TRUE, FALSE)
+
+
+source(RMD_BASE_PATH %+% "CG18_dynamic_text.R")
+```
+
+
+<div id="cover_page">
+<div id="title">
+
+<img src="https://s3.amazonaws.com/PERTS/images/perts-logo.png" style='width:180px;' />
+
+# Growth Mindset for College Students
+## Results for `r org_name`  
+### `r REPORT_COHORT_LABEL`
+
+</div>
+<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>
+<div class="cover-info">
+<div class="cover-date-wrapper">
+<div class="cover-date">
+`r "DATE: " %+% Sys.Date()`
+</div>
+</div>
+</div>
+</div>
+```{r inusufficient sample, eval = !ENOUGH_COMPLETERS, fig.height=4, fig.width = 4, fig.align="center"}
+paste0(
+    "<h2>Introduction to the Report</h2>" ,
+    "Thank you for participating in Growth Mindset for College Students! This report is provided by the <a href='https://www.perts.net'>Project for Education Research that Scales (PERTS)</a> to describe the program’s impact on students at " , school_name , ", to let you know how many students at " ,
+    school_name , " participated in the program, and to offer insight into other actionable psychological barriers that may be affecting your student body."
+  ) %>% cat
+cat("<br><br>")  
+cat("<h2>Impact of Growth Mindset for College Students</h2>")
+cat(treatment_effect_text$insufficient_numbers)
+```
+
+```{r, eval = FALSE}
+cat("###############")
+for (j in names(branch_text)) {
+  cat("<br><br>")
+  cat(j)
+  cat("<br><br>")
+  cat(branch_text[[j]])
+}
+cat("###############")
+```
+
+
+```{r new_text_chunk, eval = ENOUGH_COMPLETERS, fig.height=4, fig.width = 4, fig.align="center"}
+
+cat("<br>")
+cat(cg18_text$chunk_1)
+cat("<br><br><br>")
+print(overall_ggplot)
+fig1_caption <- "<p><font size='2'><b>Figure 1.</b> Growth mindset scores before and after the program. The percentages represent students who were higher than 4 on a 6-point scale. Bars represent standard error of the mean. Stars indicate statistical significance of differences in scores before and after the program; &ast;p<.05, &ast;&ast;p<.01, &ast;&ast;&ast;p< .001.</font></p>"
+cat(fig1_caption)
+cat("<div class='page-break'></div>")
+cat(cg18_text$chunk_2)
+cat(cg18_text$chunk_3)
+cat("<br>")
+
+```
+
+
+
+
+## How Did the Program Change Students’ Mindsets?
+
+<div style='background-color:#e9f1f7; border:1px #282f43 solid; padding:15px; font-size:smaller; width:50%; float: right; clear: right; margin:0.5em 0 1em 1em'>
+### What is growth mindset?
+When students understand that their basic intelligence can grow like a muscle, research shows that they feel free to approach their coursework with confidence. They understand that their intelligence is always under construction, and so they do not have to worry that the critical work of learning—studying hard, asking questions, and making mistakes—signals a lack of intelligence. On the contrary, these things are how you become smart. The understanding that intelligence can grow is known as a growth mindset, whereas the belief that intelligence is fixed, like eye color, is called a fixed mindset. When students think about school with a growth mindset, research shows that they are more likely to seek challenges, take risks, ask for help, and put effort into their schoolwork—which then leads to higher academic achievement for months or even years to come (e.g., [Yeager et al., 2016](http://www.pnas.org/content/113/24/E3341.full); [Claro, Paunesku & Dweck, 2016](http://www.pnas.org/content/113/31/8664.short); [Aronson, Fried & Good, 2002](http://www.sciencedirect.com/science/article/pii/S002210310191491X)). For more information, visit [the Mindset Scholars' Network's page on growth mindset](mindsetscholarsnetwork.org/learning-mindsets/growth-mindset/)
+</div>
+
+Developed by expert researchers at Stanford University, Growth Mindset for College Students was designed to teach students to think with a growth mindset. During the program, students were presented with evidence that the brain can change and become smarter. They learned how neural plasticity continues into adulthood, and that people of any age can become substantially smarter with hard work, help from others, and good study strategies. Finally, they completed an exercise in which they explained these concepts to a fictional student.
+
+Importantly, the program did not tell students they “should” adopt a growth mindset, as research in persuasion suggests that telling students to think a certain way may make them feel defensive. Instead, the program concluded with a self-persuasion exercise in which participants considered the fate of other students who have not yet realized that the brain can become smarter. The exercise noted that these other students may feel hopeless when they struggle academically, because they believe struggle is a sign of limitation, rather than a signal of intellectual growth. Participants were asked to write a letter to these other students, explaining that the brain can get stronger at any age and that having to work hard in a class does not mean that students are “not smart” at the subject. In this way, participants endorsed the idea of a growth mindset by composing an uplifting message for others—a message that was also uplifting for the participants themselves.
+
+Many students wrote letters that included details and examples from their own lives (see below for examples from your students), which gave them an opportunity to reinterpret their own life experiences through a growth mindset lens. In this way, the program led students to generate their own understanding of a growth mindset, tailored to their own life experiences.
+
+<div class='page-break'></div>
+## In Students’ Own Words
+
+Below are some examples of what students at `r org_name` wrote as part of the program:
+
+```{r quotes_chunk, results = "asis", eval = TRUE}
+# print quotes from the quotes file
+quotes <- d_quotes$value[d_quotes$organization_id == org_id] %>%
+    util.to_ascii %>%
+    # remove newlines
+    gsub("\n", " ", .) %>%
+    # remove repeat spaces
+    gsub("[ ]{2,}", " ", .) %>%
+    unique
+
+# some coarse checks for quote uniqueness to be logged
+simplified_quotes_length <- quotes %>%
+    # move to lower-case
+    tolower %>%
+    # remove all special characters %>%
+    gsub("[[:punct:]]", "", .) %>%
+    unique %>%
+    length
+
+if (length(quotes) > 0) {
+    for (quote in quotes) {
+        
+        #cat("<br>")
+        cat('<div class="page-do-not-break">')
+        cat('<div style="border: 1px solid #FFFFFF ;padding: 15pt 15pt 15pt 15pt;">')
+        cat('<i>')
+        quote %>% util.trim() %>% paste0('"',.,'"') %>% cat()
+        cat('</i>')
+        cat("</div></div>")
+        # log that quotes were displayed
+        specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "quotes_displayed"] <- TRUE
+  
+    }
+} else {
+    paste("There are no quotes to display for ", org_name, "!") %>%
+        util.warn()
+    # if quotes are missing because small sample size, print additional explanation
+    if (specific_school_stats$n_numer < N_COMPLETERS_THRESHOLD) {
+      cat(quotes_warning_explanation)
+    }
+    specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "quotes_displayed"] <- FALSE
+}
+```
+
+<div class='page-break'></div>
+## How to Support Your Students Further in Developing Growth Mindsets
+
+It’s exciting that Growth Mindset for College Students offered such a dramatic boost in students’ levels of growth mindset. Research suggests that these immediate results may carry forward to some extent on their own (see [Yeager & Walton, 2011](http://journals.sagepub.com/doi/abs/10.3102/0034654311405999)). Still, many colleges care deeply about their students’ development and success, and want to know what more they can do to support their students in thinking about school with a growth mindset. To continue helping your students approach school with a growth mindset, consider the following:
+
++ __Participate in Growth Mindset for College Students again!__ PERTS will make Growth Mindset for College Students available for free throughout the 2019-2020 and 2020-2021 academic school years. All colleges who participated in the `r YEAR` program will be eligible. You will receive a formal invitation to participate again in the next few months, or you can email our team at support@perts.net if you would like to let us know that you are already interested! Please also email us if you would like to share feedback from your experience with the program—we would love to hear how we can make it even better for your students and faculty next year.
+
++ __Visit the PERTS Mindset Kit__ [www.mindsetkit.org](https://www.mindsetkit.org/).This free resource offers materials for understanding what a growth mindset is, as well as ideas for using growth mindset language and principles in the classroom. Though originally developed for K-12 educators, many college faculty have told us that they were able to adapt the Mindset Kit’s content and ideas for their college courses.
+
++ __Join the PERTS contact list.__ In the next 1-2 years, PERTS will have tools available for institutional staff members to  __receive evidence-based practice recommendations and track their progress__ in fostering a growth mindset culture in their institutions. If you would like to be put on a contact list for when these tools are available, please email contact@perts.net!
+
+
+## Can My College Conduct Our Own Program Evaluation?
+
+Yes! Continuous program evaluation and improvement are at the core of our mission at PERTS, and we are happy to support these efforts. For a list of student identifiers and students’ progress through the activity, please see the Participation button on your Dashboard. If you plan to conduct an evaluation, there are a couple of factors that we suggest to keep in mind:
+
++ __Comparison Groups.__ A common evaluation strategy is to compare a group of students who completed the program with a group who did not. It is important to consider how such comparison groups might differ from each other, aside from the program. For example, students who choose to complete the program might be more compliant in general than students who decline to participate: they might be more likely to complete homework, attend class, etc. In that case, a “benefit” of the program could falsely appear in the data due to already-existing differences between the two comparison groups. To mitigate these possibilities, it is helpful to create comparison groups that are as closely matched as possible (e.g., similar prior academic performance, demographics, etc.). For more information on causal inference with different types of data, we recommend [this resource on understanding types of evidence](https://edtechrce.org/static/pdf/Understanding%20types%20of%20evidence.pdf), put out by the Mathematica Center for Improving Research Evidence.
+
++ __Statistical Power.__ Online growth mindset activities tend to have modest effects on academic outcomes, which means that a large sample is needed to detect effects reliably. Whenever possible, we recommend including at least 500-600 students in each comparison group to achieve a reasonable likelihood of detecting any impact of the program on academic outcomes. If your sample includes fewer than 500 students, you may miss effects of the program.
+
+<div class='page-break'></div>
+
+# Participation Summary
+
+The table below shows how many students at `r org_name` participated in each session of the program during the `r YEAR` school year. 
+
+```{r chunk4, results = "asis"}
+participation_summary_df <- 
+  data.frame(
+    variable = c("opened_activity", "answered_survey_questions", "completed_activity"),
+    number_of_students = c(
+      specific_school_stats$opened_activity,
+      specific_school_stats$answered_survey_questions,
+      specific_school_stats$completed_activity)
+  ) %>%
+  mutate(variable = sentence_case(as.character(variable))) %>%
+  setNames(c("", "Number of Students"))
+
+participation_summary_df %>%
+    util.html_table()
+
+# test_df <- data.frame(a = c(1, 2), b = c(3, 4))
+# test_df %>% util.html_table()
+```
+To get the most out of Growth Mindset for College Students, reaching a large number of students is key. When a large number of students complete the program, that group is more likely to contain the lower-performing students that many colleges are passionate about reaching.
+
+If you would like to see higher participation rates in the future, please refer to the tips below:
+
+* Incorporate the program into 1st-year experience programs, developmental classes, or dual enrollment classes.
+* If your school uses a learning management system, such as Blackboard or Google Classroom, consider adding the program to that system for easier accessibility.
+* Build buy-in with the facilitators by letting them know about the program during the semester before the program launches.
+* Send out emails to facilitators reminding them to have their students participate.
+* Ask facilitators to schedule make-up sessions for students who are absent.
+
+
+Do you have tips on what did or didn’t work for implementing the program at your school? We’d love to hear from you! Please send an email to support@perts.net if you’d like to share more about your school’s experience with the program.
+
+
+```{r chunk7, eval = ENOUGH_COMPLETERS}
+cat("<div class='page-break'></div>")
+cat("<h1>Social-Belonging: Another Addressable Barrier Affecting Student Engagement</h1>")
+
+cat("<p>We know that the faculty and staff at " %+% org_name %+% " care deeply about students’ psychological well-being and motivation&mdash;which is why you offered them Growth Mindset for College Students. Research suggests that this program may have a positive impact on students’ academic achievement for months, or even years, to come, but growth mindset is only one of many psychological factors that influence students’ ability to achieve their potential. Another such factor is known as Social-Belonging. When students feel socially connected, supported, and respected, they are less distracted by insecurities and more likely to engage in learning effectively. See 
+    <a href='http://mindsetscholarsnetwork.org/learning-mindsets/belonging/'>mindsetscholarsnetwork.org/learning-mindsets/belonging/</a>.</p>")
+
+cat("<p>When your students completed Growth Mindset for College Students, 
+    we also collected information about experiences in college that contribute to students' sense of belonging. The figures 
+    below present the results from those survey items. If you notice low levels of 
+    belonging among your student body overall, or significant gaps between students 
+    from different demographic groups, then social belonging may be worth addressing 
+    on your campus.</p>")
+
+cat("To support your students in experiencing a stronger sense of belonging, we recommend these resources:" %+%
+    "<br><br>" %+%
+    "<ul>" %+%
+        "<li><b>Social Belonging for College Students.</b> Together, PERTS and the College Transition Collaborative are offering Social-Belonging for College Students, open to all 4-year colleges in the U.S. This brief, free online program aims to help all students view challenges encountered in the transition to college as normal and improvable so that they are more able to remain socially and academically engaged in the face of challenges. In previous studies, the program has been effective in improving social and academic engagement on campus, and has increased GPA and retention among socially disadvantaged students. For more information, visit <a href='perts.net/orientation/cb17' target='_blank'>https://www.perts.net/social-belonging</a>.</li>" %+%
+    "<br>" %+%
+        "<li><b>The PERTS Mindset Kit,</b> (<a href target = '_blank' href = 'www.mindsetkit.org'>https://www.mindsetkit.org</a>).This free resource also has a course for educators on Social-Belonging. Though originally developed for K-12 educators, many college faculty have told us that they were able to adapt the Mindset Kit’s content for their college courses. </li>" %+%
+    "<br>" %+%
+        "<li><b>The PERTS Contact List.</b> In the next 1-2 years, PERTS will have tools available for instructors to receive evidence-based strategy recommendations and track their progress in fostering a sense of belonging among students in their courses. If you would like to be put on a contact list when these tools are available, please email contact@perts.net!</li>" %+%
+    "</ul>")
+
+########################################################################
+######## Create aggregate data by subsets ##############################
+    
+# check to make sure the all_items has all of the required columns
+mandatory_items_cols <- c("var_name", "min_good", "max_good", "question_text", "learning_condition")
+present_items_cols <- mandatory_items_cols %in% names(all_items)
+if(any(!present_items_cols)){
+    stop("In agg_by_subsets, the following required columns " %+%
+             "are not present in your all_items: " %+%
+             paste0(mandatory_items_cols[!present_items_cols], collapse = ", "))
+}
+
+# restrict aggregation procedure to metrics and subset groups that are present in the wide data
+all_metrics <- all_items$var_name[!util.is_blank(all_items$learning_condition)]
+present_metrics <- all_metrics[all_metrics %in% names(dw)]
+
+present_subset_groups <- subset_groups[subset_groups %in% names(dw)]
+
+
+# melt the wide data to a long dataset with one row per user/question
+id_vars <- "participant_id"
+d_melted <- melt(
+    dw[c(id_vars, present_subset_groups, present_metrics)],
+    id.vars = c(id_vars, present_subset_groups)
+)
+# merge in the min-good and max-good values
+d_melted <- merge(
+    d_melted,
+    all_items[c("var_name", "min_good", "max_good", "question_text", "learning_condition")],
+    by.x = "variable",
+    by.y = "var_name"
+)
+d_melted$metric <- as.character(d_melted$variable)
+d_melted$value <- as.numeric(d_melted$value)
+d_melted$good_range <- 
+    d_melted$value <= d_melted$max_good &
+    d_melted$value >= d_melted$min_good 
+d_melted$good_range <- ifelse(d_melted$good_range,1,0)
+
+metrics_with_undefined_range <- d_melted$variable[
+    util.is_blank(d_melted$min_good) & !util.is_blank(d_melted$value)
+] %>% unique %>% as.character
+
+# if any metrics have no defined good range, remove them and warn
+if(length(metrics_with_undefined_range) > 0){
+    warning("The following metrics were removed due to lack of defined range: " %+%
+                paste0(metrics_with_undefined_range, collapse = ", "))
+    d_melted <- d_melted[!d_melted$metric %in% metrics_with_undefined_range, ]
+}
+
+#### Create aggregated dataset
+# dataset will be aggregated in such a way that there is one row per
+# subset, and multiple rows per subset-group (i.e., one row for males, 
+# one row for females, one row for advantaged race, etc). There 
+# is also a row for the full dataset for all students at the relevant org_name.
+
+
+ag_metrics_list <- list()
+ag_metrics_list[["Full"]] <- d_melted %>%
+    group_by(metric) %>%
+    summarise(
+        pct_good = mean(good_range, na.rm = TRUE),
+        n = n(),
+        se = se(good_range),
+        subset = "All Students"
+    ) %>%
+    mutate(subset_feature = "All Students") %>%
+    as.data.frame
+    
+
+for(subset_group in present_subset_groups){
+    # compute statistical significance on melted data first
+    # (do this here because of NSE in summarise() function)
+    buffer_df <- d_melted
+    # use for-loop to compute separate p-values for each metric.
+    # (note that this is dumb but can't use group_by because of NSE)
+    for(metric in unique(buffer_df$metric)){
+        dv <- buffer_df[buffer_df$metric %in% metric, "good_range"]
+        iv <- buffer_df[buffer_df$metric %in% metric, subset_group]
+        buffer_df[buffer_df$metric %in% metric, "pval"] <- p_aov(dv, iv)
+    }
+    grouping <- c("metric", subset_group)
+    ag_metrics_list[[subset_group]] <- buffer_df %>%
+        dplyr::filter(!is.na(race_simplified)) %>%
+        group_by_(.dots = grouping) %>%
+        summarise(
+            pct_good = mean(good_range, na.rm = TRUE),
+            n = n(),
+            se = se(good_range),
+            subset = subset_group,
+            pval = first(pval)
+        ) %>%
+        setNames(c("metric", "subset_feature", "pct_good", "n", "se", "subset", "pval")) %>%
+        as.data.frame
+}
+
+ag_metrics <- util.rbind_union(ag_metrics_list) %>%
+    dplyr::filter(!is.na(subset_feature))
+
+
+
+##############################################################################
+##  Privacy
+##  Remove any subset with a group that has n < min_cell.
+##  Note: removing just the offending offending cell not good enough because
+##  let's say n=30, total=72%, Latino=74%. If only one non-Latino, 
+##      you know they're in the "bad" range.
+##  pixelate groups with no variance (add se even if it does not exist)
+
+# ag_metrics$pct_good[ag_metrics$n < min_cell] <- NA
+
+# pixelate se and pct_good
+# if no variance, impute smallest non-zero se
+# if no pct_good, impute one person worth of it
+ag_metrics$se[ag_metrics$se == 0] <- min(ag_metrics$se[ag_metrics$se > 0], na.rm = TRUE)
+ag_metrics$se[is.na(ag_metrics$se) & ! is.na(ag_metrics$pct_good)] <-
+    min(ag_metrics$se[ag_metrics$se > 0 ], na.rm=TRUE)
+# here we're replacing "0" with the smallest possible proportion of "good" responses
+# so as not to implicate a whole group of students for having uniformly 
+# "bad" responses.
+ag_metrics$pct_good[ag_metrics$pct_good %in% 0] <- 
+    1 / ag_metrics$n[ag_metrics$pct_good %in% 0]
+
+
+# find all the rows corresponding to small n's 
+small_rows <- ag_metrics[ag_metrics$n < MIN_CELL,]
+small_subsets <- small_rows[,c("subset","metric")] %>%
+                    unique() %>%
+                    mutate(delete_small_subset = TRUE)
+# delete values from all rows matching any subset feature/metric/dataset/week start 
+# combos that had small n's. That way, you're not just deleting e.g., the 
+# one gender value with < 5 responses; you're deleting gender as a category 
+# from the report for that dataset/metric/day.
+ag_metrics <- merge(
+    ag_metrics,
+    small_subsets,
+    by = c("subset","metric"),
+    all = TRUE
+) %>%
+    mutate(delete_small_subset = !is.na(delete_small_subset))
+
+ag_metrics[ ag_metrics$delete_small_subset, c("pct_good","se") ] <- NA
+ag_metrics$grand_mean <- ifelse(ag_metrics$subset %in% "All Students","All","Subset")
+
+
+
+agm <- merge(ag_metrics, all_items, by.x = "metric", by.y = "var_name", all.x = TRUE, all.y = FALSE)
+agm$subset_feature_f <- factor(agm$subset_feature, c("All Students", "Male", "Female", "Blk/Nat/Lat/Oth", "White/Asian"))
+
+agm$question_text <- gsub("SCHOOL NAME", org_name, agm$question_text)
+agm$question_text_wrapped <- sapply(agm$question_text, function(x) wrap_text(x, 45))
+
+agm$text_percentages <- as.character(round(agm$pct_good, 2) * 100) %+% "%"
+
+
+### for plotting significance stars:
+
+agm$stars <- ifelse(agm$pval < .001, "***", ifelse(agm$pval < .01, "**", ifelse(agm$pval < .05, "*", NA)))
+agm$stars[is.na(agm$stars)] <- ""
+
+find_grouped_x_coordinates <- function(grouping_level_var, grouping_var){
+    n_unique_levels <- length(unique(grouping_level_var))
+    df <- data.frame(grouping_level_var, grouping_var)
+    
+    starting_x <- 0
+    for(v in unique(grouping_var)){
+        n_levels_in_group <- unique(df$grouping_level_var[df$grouping_var %in% v]) %>% length
+        
+        # if there's just one level, do starting_x + 1
+        if(n_levels_in_group == 1){
+            df$xcoord[df$grouping_var %in% v] <- starting_x + 1
+        } else{
+        # otherise, put the x value in the middle of the relevant bars
+            df$xcoord[df$grouping_var %in% v] <- starting_x + mean(c(1:n_levels_in_group))
+        }
+        starting_x <- starting_x + n_levels_in_group
+    }
+    return(df$xcoord)
+}
+
+
+agm$xcoord_middle <- find_grouped_x_coordinates(agm$subset_feature, agm$subset)
+agm <- agm %>%
+    group_by(subset, metric) %>%
+    mutate(ycoord = max(pct_good) + .1 * max(pct_good)) %>%
+    as.data.frame
+
+# coordinates for lines
+
+# add lines
+agm$line1_x_position <- ifelse(!util.is_blank(agm$stars), agm$xcoord_middle - .45, NA)
+agm$line1_xend_position <- ifelse(!util.is_blank(agm$stars), agm$xcoord_middle - .25, NA)
+agm$line2_x_position <- ifelse(!util.is_blank(agm$stars), agm$xcoord_middle + .25, NA)
+agm$line2_xend_position <- ifelse(!util.is_blank(agm$stars), agm$xcoord_middle + .45, NA)
+
+agm$ycoord_line <- agm$ycoord + .005
+
+
+# log info about agm
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "nrows_agm"] <- nrow(agm)
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "nbars_bel"] <- nrow(agm[!is.na(agm$pct_good), ])
+
+expected_subset_features <- c("All Students", "Male", "Female", "Blk/Nat/Lat/Oth", "White/Asian")
+printed_subset_features <- as.character(unique(agm$subset_feature[!is.na(agm$pct_good)]))
+missing_subset_features <- setdiff(expected_subset_features, printed_subset_features)
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "missing_subset_features_bel"] <- paste0(missing_subset_features, collapse = "; ")
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "agm_n"] <- agm$n[agm$subset_feature %in% "All Students"] %>% unique %>% paste(., collapse = "; ")
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "agm_n_WA"] <- agm$n[agm$subset_feature %in% "White/Asian"] %>% unique %>% paste(., collapse = "; ")
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "agm_n_BLO"] <- agm$n[agm$subset_feature %in% "Blk/Nat/Lat/Oth"] %>% unique %>% paste(., collapse = "; ")
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "agm_n_male"] <- agm$n[agm$subset_feature %in% "Male"] %>% unique %>% paste(., collapse = "; ")
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "agm_n_female"] <- agm$n[agm$subset_feature %in% "Female"] %>% unique %>% paste(., collapse = "; ")
+
+specific_school_stats_df[specific_school_stats_df$project_cohort_id %in% project_cohort_id, "max_ycoord"] <- max(agm$ycoord, na.rm = T)
+
+```
+
+
+```{r chunk8, eval = ENOUGH_COMPLETERS}
+
+#cat("<div class='page-break'></div>")
+########################################################################
+################## Print graphs for each metric ########################
+
+figure_labels <- "2" %+% letters[1:length(all_lcs)] %+% "."
+names(figure_labels) <- all_lcs
+cat('<div class="page-break"></div>')
+cat('<div class="page-do-not-break">')
+iden <- function(x) return(x)
+for(lc in all_lcs){
+    
+    # filter df to just the relevant lc
+    lc_df <- agm[agm$learning_condition %in% lc, ]
+    
+    # set the response options for the y-label
+    response_options <- lc_df$question_choices %>% unique
+    min_good <- lc_df$min_good %>% unique
+    max_good <- lc_df$max_good %>% unique
+
+    response_options <- response_options %>%
+        lapply(., function(x) get_good_and_bad_responses(x, min_good, max_good))
+    
+    trim_responses <- function(response_vector, spl = " "){
+        # for all but the last item in a vector, splits on spl and removes any repeated parts
+        responses_to_trim <- response_vector[1:(length(response_vector) - 1)]
+        responses_split <- str_split(responses_to_trim, pattern = spl) %>% unlist
+        parts_to_keep <- responses_split[!util.duplicated_all(responses_split)]
+        return(c(parts_to_keep, response_vector[length(response_vector)]))
+    }
+    
+    # in case scales have different responses, then paste the "good" responses together
+    good_responses <- lapply(response_options, function(l) return(l$good))
+    good_responses_trimmed <- lapply(good_responses, function(x) trim_responses(x))
+    good_responses_pasted <- lapply(good_responses_trimmed, function(x) paste0(x, collapse = "/"))
+    good_response_string <- paste0(good_responses_pasted, collapse = "\nOR ")
+    
+    ylab_string <- "% of students who selected:\n" %+% good_response_string
+    
+    lc_label <- sentence_case(lc)
+    this_lc_desc <- lc_desc[[lc]]
+    lc_desc_html <- mkdn_friendly_html(this_lc_desc$description)
+    
+     lc_header <- "<h2 id='" %+% lc %+% "'>" %+% lc_label %+% "</h2>"
+#     cat(lc_header)
+#     cat("<div class='lc_description'>" %+% lc_desc_html %+% "<br><br></div>")    
+    # cat("<div class='lc_introduction'>" %+% lc_intro_html %+% "</div>")
+    cat(figure_labels[[lc]]) 
+    cat("<br>")
+    driver_cross_section <- 
+        ggplot( lc_df, 
+                aes( subset_feature_f, pct_good, fill=grand_mean) 
+        ) +
+        geom_bar( 
+            stat = "summary", fun.y = "mean"
+        ) +
+        geom_text(aes(x = xcoord_middle, y = ycoord, label = stars)) +
+        geom_segment(aes(x = line1_x_position, xend = line1_xend_position, y = ycoord_line, yend = ycoord_line)) +
+        geom_segment(aes(x = line2_x_position, xend = line2_xend_position, y = ycoord_line, yend = ycoord_line)) +
+        #geom_errorbar(aes(ymin=pct_good-se, ymax=pct_good+se), width=.1, color = "black") +
+        scale_fill_manual(
+            breaks=c("All","Subset"),
+            values=DRIVER_GRAPH_COLORS ,
+            guide="none"
+        ) +
+        scale_colour_manual(  
+            guide="none", # removes the color guide
+            values=DRIVER_GRAPH_COLORS
+        ) +
+        facet_grid( . ~ question_text_wrapped ) + 
+        geom_text(
+              aes(label = text_percentages), 
+              stat="summary", 
+              fun.y="mean", 
+              vjust = +1.3, 
+              size = ug.text_size/3,
+              color = "white",
+              fontface="bold") +
+        scale_y_continuous(labels=percent) +
+        theme(
+            legend.key=element_rect(color="black", size=ug.text_size),
+            #axis.text=element_text(face="bold", size=ug.text_size ),
+            axis.text.x=element_text(
+                face="bold", 
+                size=ug.text_size, 
+                angle=270,
+                hjust=0),
+            axis.title=element_text(face="bold"),
+            panel.background    = element_blank() ,
+            #   make the major gridlines light gray and thin
+            panel.grid.major.y  = element_line( size=ug.line_size, colour="#C0C0C0" ),
+            #   suppress the vertical grid lines
+            panel.grid.major.x  = element_blank() ,
+            #   suppress the minor grid lines
+            panel.grid.minor    = element_blank() ,
+            #   adjust the axis ticks
+            axis.ticks    = element_line( size=ug.line_size , colour="black" ),
+            #   move the y-axis over to the left 
+            axis.title.x  = 
+                element_text( vjust=-.5 , 
+                              face="bold", 
+                              color="black", 
+                              angle=0, 
+                              size=ug.text_size ) ,
+            axis.text = 
+                element_text( vjust=0 , face="bold",
+                              color="black", angle=0, 
+                              size=ug.text_size ) ,
+            axis.title.y = 
+                element_text( vjust=.2 , color="black", angle=90, size=ug.text_size ) ,
+            plot.title = element_text(
+                colour="black", size=plot_title_size, face="bold", hjust=0),
+            plot.margin = unit(c(0,0,0,0), "cm"),
+            panel.margin = unit(panel_margin, "in")
+        ) +
+        xlab("") +
+        ylab(ylab_string) +
+        coord_cartesian(ylim=c(0,1))
+    
+    print(driver_cross_section)
+    cat("<br>")
+#         cat("<p><font size = '1'>*(Other response options were " %+%
+#             paste0(response_options$bad, collapse = ", ") %+% ".)" %+%
+#             "</font></p>")
+    # print out change ideas
+#     cat("<p>")
+#     cat(change_ideas[[lc]])
+#     cat("</p>")
+    
+}
+
+fig2_caption <- "<p><font size='2'><b>Figure 2(a-c).</b>" %+%
+        " Students' responses to items measuring college experiences related to social belonging," %+%
+        " disaggregated by gender and ethnic background. Ethnicities are " %+%
+        " grouped to avoid bars representing very small numbers of students and to protect students' privacy." %+%
+        " Stars represent statistical significance of differences between groups" %+%
+        "; &ast;p<.05, &ast;&ast;p<.01, &ast;&ast;&ast;p< .001.</font></p>"
+cat(fig2_caption)
+cat('</div>')
+#cat("<div class='page-break'></div>")
+
+
+
+```
+
+
+# About PERTS
+
+PERTS is a nonprofit organization that empowers educators to improve student outcomes by applying research-based practices. Education research has a serious problem when it comes to translating ideas into practices. Concepts that are often untested at scale become fads that educators are required to implement in their classrooms without proper training, and students end up suffering the consequences. Promising research is left in the dust when the “Next Big Thing” comes along and policy makers repeat the cycle.
+
+Our mission at PERTS is to improve the equity of learning outcomes by bridging the gap between cutting-edge research and implementation practices. We believe that properly scaling educational research can empower schools to reduce inequity and create better experiences for students and teachers. Learn more at [www.perts.net](https://www.perts.net).
+
+
+```{r footnotes, eval = ENOUGH_COMPLETERS}
+cat("<br><br><br><br><br><br><br><br><br><br><br><br><br><br><br>")
+cat("<h4><u>Methodological notes</u></h4>")
+cat(cg18_text$footnote_1)
+cat("<br />")
+cat(cg18_text$footnote_2)
+cat("<br />")
+cat(cg18_text$footnote_3)
+cat("<br />")
+cat(cg18_text$footnote_4)
+cat("<br />")
+```

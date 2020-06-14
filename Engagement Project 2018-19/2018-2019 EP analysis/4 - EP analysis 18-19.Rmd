@@ -1,0 +1,1059 @@
+---
+title: "EP analysis 2018-2019.Rmd"
+author: "Daniel Greene and Sarah Gripshover"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  pdf_document:
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+    toc: yes
+    toc_depth: 2
+  html_document:
+    fig_caption: yes
+    fig_height: 7
+    fig_width: 9
+    toc_depth: 2  
+---
+
+# Introduction
+
+The Engagement Project (EP) is a team-based professional development program to help teachers create the conditions for student engagement and learning. It is based on decades of research into motivational conditions that are conducive to student engagement and learning - providing encouraging and detailed performance feedback (SOURCE), making students feel respected and personally cared for (SOURCE), and helping students to understand the relevance of their curriculum outside of school (SOURCE).
+
+In the Engagement Project, teachers use a web-based platform called Copilot to run brief surveys with their students and receive anonymous student feedback about the presence or absence of these "learning conditions" (LCs) in their classrooms. Teachers then review their reports individually and in teams, make changes to their teaching practice, and then survey again to test for improvement. Teachers can repeat this cycle to create sustained improvement in their classroom learning conditions.
+
+This document summarizes PERTS’ progress towards its goals for the 2018-2019 implementation of the Engagement Project. It builds on previous analyses of survey data from a pilot of the EP in the 2017-2018 academic year, and aims to replicate previously-identified relationships between students’ perceived LCs and effort and improvements in learning conditions over time in classrooms that implemented the EP with fidelity. It also aims to demonstrate relationships between LCs and end-of-year academic outcomes.
+
+# Implementation summary
+
+The EP survey dataset was collected during the 2018-2019 academic year. We recruited middle- and high-school teachers across the country to participate in the EP via outreach emails and phone calls. Teachers participating in the EP directed their students to an online survey that they completed one or more times throughout the year, in blocks of time called “cycles.” Within each cycle, teachers would survey their students, receive automated summary reports about their students’ experiences, and meet in teams of 2-8 teachers to review their results and generate ideas for improving their results for the next cycle. Teachers also used a custom online platform called Copilot to manage their classroom survey participation and receive automated summary reports from PERTS. PERTS servers recorded information about the overlapping membership structures of students, classrooms, teachers, and teams. Teachers and students were not paid for their participation. Students of teachers using the Engagement Project completed one or more surveys depending on their classroom and at the discretion of their teacher (who was blind to the study’s hypotheses and not involved in the research).
+
+# Participation summary
+
+5,384 students participated in the EP in the 2018-2019 school year. These students were in a total of 251 classes under 101 teachers in 22 teams.
+
+Participation was high, both within classes and over time. On average, 85% of the students listed by their teachers completed the survey at any given time point. 76% of teachers surveyed their students at least twice within 90 days, and 62% surveyed their students at least three times within 135 days.
+
+One important component of EP participation is “fidelity” — whether teachers are implementing the EP in their classes in such a way that their students believe in the teachers’ intentions and provide honest answers to the survey. We assessed teacher fidelity by asking students whether they believed that their survey responses would be used to actually make class better for them, and we provided teachers with feedback about fidelity in their reports. Encouragingly, 64% of classes had high fidelity ratings (more than 80% of students in the class believed that their responses would be used to make class better). This was up from 50% of classes in the 2017-2018 school year.
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      fig.width = 9,
+                      fig.height = 7)
+
+```
+
+```{r, include=FALSE}
+
+############### USER-DEFINED INPUTS #####################################
+
+general_data_folder_crypt_path <- "Data for 2018-2019 EP analysis"
+input_data_crypt_path <- "Data for 2018-2019 EP analysis/4 - 2018-2019 cleaned data for PERTS analysis.csv"
+
+```
+
+```{r, results='hide', echo = FALSE}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+options(xtable.comment = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    library(tidyverse)
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    gymnast_install()
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(scales)
+
+# Set "today" - by default, use the real today
+TODAY <- lubridate::ymd(Sys.Date())
+
+```
+
+```{r}
+
+############### LOAD DATA #####################################
+
+d <- util.find_crypt_paths(list(a = input_data_crypt_path))$a %>%
+  read.csv()
+
+# shorten race code for presentation purposes
+d$race[d$race %in% "Native American, Other, Black or African American, Hispanic or Latino"] <-
+  "NatAm/Other/Black/Hisp"
+
+# also get first-measurements
+d_first <- dplyr::filter(d, survey_ordinal %in% 1)
+
+# Create first-to-last df for H2
+# And drop all rows where survey_ordinal_ftl == 0, because they are students with just one observation.
+# note that this maneuver actually doesn't work for the items that weren't administered every week.
+# for those we have to do something else.
+d_wide <- d %>%
+  arrange(student_id, survey_ordinal) %>%
+  group_by(student_id) %>%
+  summarise(survey_ordinal_ftl = last(survey_ordinal) - first(survey_ordinal),
+            # outcomes
+            effort_first = first(na.omit(effort)),
+            effort_last = last(na.omit(effort)),
+            effort_ftl = last(na.omit(effort)) - first(na.omit(effort)),
+            # subscales
+            fg_first = first(na.omit(fg)),
+            fg_last = last(na.omit(fg)),
+            fg_ftl = last(na.omit(fg)) - first(na.omit(fg)),
+            mw_first = first(na.omit(mw)),
+            mw_last = last(na.omit(mw)),
+            mw_ftl = last(na.omit(mw)) - first(na.omit(mw)),
+            tc_first = first(na.omit(tc)),
+            tc_last = last(na.omit(tc)),
+            tc_ftl = last(na.omit(tc)) - first(na.omit(tc)),
+            #combined score
+            comb_lc_score_first = first(na.omit(comb_lc_score)),
+            comb_lc_score_last = last(na.omit(comb_lc_score)),
+            comb_lc_score_ftl = last(na.omit(comb_lc_score)) - first(na.omit(comb_lc_score)),
+            # demographics
+            gender = first(gender),
+            race = first(race),
+            prior_gpa = first(prior_gpa),
+            class_id = first(class_id),
+            teacher_id = first(teacher_id),
+            team_id = first(team_id)
+        )
+
+d_wide$comb_lc_score_first_bins <- floor(d_wide$comb_lc_score_first)
+
+# the validation items were offered on a different cadence than the lc + effort items.
+# therefore, first and last has to be determined separately
+d_valid <- d %>%
+    arrange(student_id, survey_ordinal) %>%
+    group_by(student_id) %>%
+    summarise(survey_ordinal_ftl = last(survey_ordinal) - first(survey_ordinal),
+        expected_grade_first = first(na.omit(expected_grade)),
+        expected_grade_last = last(na.omit(expected_grade)),
+        expected_grade_ftl = last(na.omit(expected_grade)) - first(na.omit(expected_grade)),
+        gms_first = first(na.omit(gms)),
+        gms_last = last(na.omit(gms)),
+        gms_ftl = last(na.omit(gms)) - first(na.omit(gms)),
+        n_gms = length(na.omit(gms)),
+        belonging_first = first(na.omit(belonging)),
+        belonging_last = last(na.omit(belonging)),
+        belonging_ftl = last(na.omit(belonging)) - first(na.omit(belonging)),
+        n_belonging = length(na.omit(belonging))
+    ) %>%
+    dplyr::filter(survey_ordinal_ftl > 0)
+
+
+
+d_ftl <- d_wide %>%
+  dplyr::filter(survey_ordinal_ftl > 0)
+
+# sg checking some things out. What is the most meaninful split in comb_lc_score?
+
+
+# check the coding. Looks good.
+# d_wide %>%
+#     group_by(comb_lc_score_first_bins) %>%
+#     summarise(
+#         min_score = min(comb_lc_score_first),
+#         max_score = max(comb_lc_score_first)
+#     )
+
+# plot against....
+# expected grade
+
+ggplot(d_wide, aes(x = comb_lc_score_first_bins, y = expected_grade_first)) +
+    geom_line(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar
+
+# growth mindset
+
+ggplot(d_wide, aes(x = comb_lc_score_first_bins, y = gms_last)) +
+    geom_line(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar
+
+ggplot(d_ftl, aes(x = comb_lc_score_first_bins, y = gms_last)) +
+    geom_line(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar
+
+# it works but doesn't hold controlling for first gms
+lm(gms_last ~ comb_lc_score_first + gms_first, data = d_ftl) %>%
+    summary
+
+# identify high-fidelity classes (based on last ratings)
+high_fidelity_classes <- d %>%
+  group_by(student_id) %>%
+  dplyr::filter(survey_ordinal %in% last(survey_ordinal)) %>%
+  mutate(tuq_high = teacher_use_qs >= 4) %>%
+  group_by(class_id) %>%
+  summarise(pct_tuq_high = mean(tuq_high, na.rm = TRUE),
+            class_tuq_over_80 = pct_tuq_high >= .8) %>%
+  dplyr::filter(class_tuq_over_80 %in% TRUE)
+high_fidelity_classes <- high_fidelity_classes$class_id
+
+# length(unique(high_fidelity_classes)) # 169
+
+
+# Filter to students in high-fidelity classes
+d_ftl_high_fidelity <- dplyr::filter(d_ftl, class_id %in% high_fidelity_classes)
+
+
+# melt along all our first-to-last variables, rbound into one DF
+d_ftl_long <- data.frame()
+for(melt_var in c("comb_lc_score", "tc", "fg", "mw", "effort", "gms", "belonging")) {
+  
+  # melt
+  melt_var_first <- melt_var %+% "_first"
+  melt_var_last <- melt_var %+% "_last"
+  melt_df <- melt(d_ftl,
+                  id.vars = c("student_id", "race", "gender", "prior_gpa", "class_id", "teacher_id", "team_id"),
+                  measure.vars = c(melt_var_first, melt_var_last))
+  
+  # relabel first-last
+  melt_df$time <- melt_df$variable %>%
+  as.character() %>%
+  util.recode(c(melt_var_first, melt_var_last),
+              c("First", "Last"))
+  
+  # label df with th original var that was melted and rbind to the sum
+  melt_df$variable <- melt_var
+  d_ftl_long <- rbind(d_ftl_long, melt_df)
+  
+}
+
+# and label whether they are in a high-fidelity class
+d_ftl_long$class_fidelity <- ifelse(d_ftl_long$class_id %in% high_fidelity_classes,
+                                            "High", "Low")
+# and recode variables
+d_ftl_long$variable <- util.recode(d_ftl_long$variable,
+                                   c("comb_lc_score", "tc", "fg", "mw", "effort", "gms", "belonging"),
+                                   c("Combined LC score", "Teacher Caring", "Feedback for Growth",
+                                "Meaningful Work", "Effort", "Growth Mindset", "Belonging"))
+
+
+# also make a class-level version with pct_good
+# (drop mindsets and effort bc they dont have a good range)
+d_ftl_long_class <- d_ftl_long %>%
+  dplyr::filter(!variable %in% c("Effort", "Growth Mindset", "Belonging")) %>%
+  mutate(good = value >= 5) %>%
+  group_by(class_id, variable, time, class_fidelity) %>%
+  summarise(pct_good = sum(good, na.rm = TRUE)/n())
+
+
+# Proper calculation of class-level pct good requires its own data frame
+d_lc_ftl <- d %>%
+  arrange(student_id, survey_ordinal) %>%
+  group_by(student_id) %>%
+  summarise(tc__1_2__first = first(na.omit(tc1_2)),
+            tc__1_2__last = last(na.omit(tc1_2)),
+            tc__2_2__first = first(na.omit(tc2_2)),
+            tc__2_2__last = last(na.omit(tc2_2)),
+            tc__4_2__first = first(na.omit(tc4_2)),
+            tc__4_2__last = last(na.omit(tc4_2)),
+            fg__1_2__first = first(na.omit(fg1_2)),
+            fg__1_2__last = last(na.omit(fg1_2)),
+            fg__2_2__first = first(na.omit(fg2_2)),
+            fg__2_2__last = last(na.omit(fg2_2)),
+            fg__3_2__first = first(na.omit(fg3_2)),
+            fg__3_2__last = last(na.omit(fg3_2)),
+            mw__1_2__first = first(na.omit(mw1_2)),
+            mw__1_2__last = last(na.omit(mw1_2)),
+            mw__2_2__first = first(na.omit(mw2_2)),
+            mw__2_2__last = last(na.omit(mw2_2)),
+            mw__3_2__first = first(na.omit(mw3_2)),
+            mw__3_2__last = last(na.omit(mw3_2)),
+            gender = first(gender),
+            race = first(race),
+            prior_gpa = first(prior_gpa),
+            class_id = first(class_id),
+            teacher_id = first(teacher_id),
+            team_id = first(team_id))
+# melt and label with LC, question, and time
+d_lc_ftl_m <- melt(d_lc_ftl,
+                   id.vars = c("student_id", "race", "prior_gpa", "gender", "class_id", "teacher_id", "team_id"))
+d_lc_ftl_m[, c("lc", "question", "time")] <- str_split_fixed(d_lc_ftl_m$variable, "__", n = 3)
+# calculate "good"
+d_lc_ftl_m$good = d_lc_ftl_m$value > 5
+# aggregate class for pct_good, then aggregate LC
+d_lc_ftl_class <- d_lc_ftl_m %>%
+  group_by(class_id, time, lc, question) %>%
+  summarise(pct_good = sum(good, na.rm = T)/n()) %>%
+  summarise(pct_good = mean(pct_good, na.rm = T))
+# label whether they are in a high-fidelity class
+d_lc_ftl_class$class_fidelity <- ifelse(d_lc_ftl_class$class_id %in% high_fidelity_classes,
+                                            "High", "Low")
+
+# recode
+d_lc_ftl_class$lc <- util.recode(d_lc_ftl_class$lc,
+                                   c("tc", "fg", "mw"),
+                                   c("Teacher Caring", "Feedback for Growth", "Meaningful Work"))
+d_lc_ftl_class$time <- util.recode(d_lc_ftl_class$time,
+                                   c("first", "last"),
+                                   c("First", "Last"))
+
+```
+  
+# Confirmatory analyses
+
+## H1a: Combined LC score predicts self-reported effort.
+
+H1a was confirmed: combined LC score predicts concurrent self-reported effort, even controlling for student demographics and class/teacher/team placement.
+
+```{r, results='asis'}
+
+# summary(lmer(effort ~ comb_lc_score + gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | class_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d))
+# Model failed to converge - removing ( 1 | class_id )
+
+
+lc_concurrent_effort_mod <- lmer(effort ~ comb_lc_score + gender + race + prior_gpa + 
+               ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d)
+class(lc_concurrent_effort_mod) <- "lmerMod"
+stargazer(lc_concurrent_effort_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "Combined LC score predicts self-reported effort")
+
+```
+
+\newpage
+## H1b: Combined LC score predicts self-reported expected grades.
+
+H1b was confirmed: combined LC score predicts concurrent self-reported expected grades, even controlling for student demographics and class/teacher/team placement.
+
+```{r, results='asis'}
+
+lc_concurrent_exp_grade_mod <- lmer(expected_grade ~ comb_lc_score + gender + race + prior_gpa + 
+               ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d)
+class(lc_concurrent_exp_grade_mod) <- "lmerMod"
+stargazer(lc_concurrent_exp_grade_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "Combined LC score predicts self-reported expected grades")
+
+```
+
+\newpage
+
+## H2: Cross-observation changes in students’ LCs predict corresponding changes in effort
+
+H2 was confirmed: cross-observation changes in students’ LCs predict corresponding changes in effort, even controlling for student demographics, class/teacher/team placement, and initial LC scores.
+
+(This would be a great place for a line graph showing relationships between combined or individual LC scores with effort.)
+
+```{r, results='asis'}
+
+lc_delta_effort_mod <- lmer(effort_ftl ~ comb_lc_score_ftl + comb_lc_score_first +
+               gender + race + prior_gpa +
+               ( 1 | class_id ) + ( 1 | teacher_id ) +
+               ( 1 | team_id ),
+             data = d_ftl)
+class(lc_delta_effort_mod) <- "lmerMod"
+stargazer(lc_delta_effort_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "Cross-observation changes in students’ LCs predict corresponding changes in effort")
+
+
+# results still hold with t1 effort, but model doesn't converge... probably bc t1 effort is correlated .4 with t1 LCs.
+# note that including t1 effort was not part of what we preregistered, so it's exploratory.
+# lmer(effort_ftl ~ comb_lc_score_ftl + comb_lc_score_first + effort_first +
+#                gender + race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+
+```
+
+\newpage
+
+## H3: Students’ personal perceptions of LCs are correlated with the LCs of their classmates
+
+H3 was confirmed: students’ personal perceptions of LCs are correlated with the LCs of their classmates, even controlling for student demographics and class/teacher/team placement.
+
+```{r, results='asis'}
+
+# summary(lmer(comb_lc_score ~ comb_lc_score_classmates + gender + race + prior_gpa +
+#                ( 1 | student_id )  + ( 1 | class_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d))
+# Singular fit - removing ( 1 | class_id )
+
+# summary(lmer(comb_lc_score ~ comb_lc_score_classmates + gender + race + prior_gpa +
+#                ( 1 | student_id )  + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d))
+# Singular fit - removing ( 1 | teacher_id )
+
+lc_classmates_mod <- lmer(comb_lc_score ~ comb_lc_score_classmates + gender + race + prior_gpa +
+               ( 1 | student_id ) + ( 1 | team_id ),
+             data = d)
+class(lc_classmates_mod) <- "lmerMod"
+stargazer(lc_classmates_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "Students’ personal perceptions of LCs are correlated with the LCs of their classmates")
+
+```
+\newpage
+
+# Exploratory analyses
+
+## Coefficient alpha of combined LC score is above .7
+
+```{r}
+
+tc_qs <- c("tc1_2", "tc2_2", "tc4_2")
+fg_qs <- c("fg1_2", "fg2_2", "fg3_2")
+mw_qs <- c("mw1_2", "mw2_2", "mw3_2")
+lc_qs <- c(tc_qs, fg_qs, mw_qs)
+
+tc_alpha <- psych::alpha(d_first[, tc_qs])$total$std.alpha %>% round(2)
+fg_alpha <- psych::alpha(d_first[, fg_qs])$total$std.alpha %>% round(2)
+mw_alpha <- psych::alpha(d_first[, mw_qs])$total$std.alpha %>% round(2)
+my_alpha <- psych::alpha(d_first[, lc_qs])$total$std.alpha %>% round(2)
+
+```
+
+Confirmed: Cronbach's alpha = `r my_alpha` for the combined LC score (only using the first measures for each student). Alphas for Teacher Caring, Feedback for Growth, and Meaningful Work are `r tc_alpha`, `r fg_alpha`, and `r mw_alpha` respectively.
+
+## When teachers implement the Engagement Project with fidelity, learning conditions improve
+
+```{r}
+
+t_test_result <- t.test(d_ftl_high_fidelity$comb_lc_score_ftl, mu = 0)
+
+# How many students improved at all in LCs?
+num_students_improved <- sum(d_ftl_high_fidelity$comb_lc_score_ftl > 0, na.rm = TRUE)
+num_classes_improved <- length(unique(d[d_ftl_high_fidelity$comb_lc_score_ftl > 0, "class_id"]))
+
+# improvement for each individual LC?
+t_test_result_fg <- t.test(d_ftl_high_fidelity$fg_ftl, mu = 0) # yes
+t_test_result_mw <- t.test(d_ftl_high_fidelity$mw_ftl, mu = 0) # yes
+t_test_result_tc <- t.test(d_ftl_high_fidelity$tc_ftl, mu = 0) # no! slight decrease!
+
+#head(d_ftl_high_fidelity)
+```
+
+We hypothesized that in classrooms with fidelity >80% (see introduction for more detail), there will be a statistically significant (p < 0.05) increase in student self-reports of learning conditions from the first to last observation as teachers implement the EP and improve their classes.
+
+Our hypothesis was confirmed. On average, students’ self-reported learning conditions improved by `r round(t_test_result$estimate, 2)` points on a 7-point scale (p < .001), which is particularly noteworthy considering that middle and high school student engagement generally tends to decrease over the school year (Corpus, McClintic-Gilbert & Hayenga, 2009; Eccles et al., 1993; Gallup, 2015). `r num_students_improved` students in `r num_classes_improved` classes showed some improvement in their learning conditions on average.
+
+We also found improvement for each individual learning condition, with the exception of Teacher Caring, which slightly decreased. (Note however that Teacher Caring is already near ceiling.)
+
+```{r}
+
+# Graph like the dashboard -
+# panels for LC average and individual LCs
+# x axis is pre-post
+# y axis is student average
+ggplot(dplyr::filter(d_ftl_long, !variable %in% c("Growth Mindset", "Belonging", "Effort")),
+       aes(time, value, color = class_fidelity, group = class_fidelity)) +
+  geom_line(stat = "summary", fun.y = "mean", size = 1) +
+  ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+                                geom="errorbar", width=.1,
+                                fun.args=list(conf.int=.95)) +
+  facet_grid(. ~ variable) +
+  xlab("Time of Measurement") +
+  ylab("Average response to learning-condition questions (1-7)") +
+  ggtitle("Changes in individual student learning-condition scores across classroom implementation fidelity") +
+  labs(color="Classroom Implementation Fidelity")
+
+
+# Graph like the dashboard -
+# panels for LC average and individual LCs
+# x axis is pre-post
+# y axis is class pct-good
+ggplot(d_lc_ftl_class,
+       aes(time, pct_good, color = class_fidelity, group = class_fidelity)) +
+  geom_line(stat = "summary", fun.y = "mean", size = 1) +
+  ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+                                geom="errorbar", width=.1,
+                                fun.args=list(conf.int=.95)) +
+  facet_grid(. ~ lc) +
+  xlab("Time of Measurement") +
+  ylab("Avg. Percent of Class that Agrees or Strongly Agrees") +
+  ggtitle("Changes in classroom learning-condition percent-good scores across classroom implementation fidelity") +
+  labs(color="Classroom Implementation Fidelity")
+
+
+# ggplot(d_lc_ftl_class[d_lc_ftl_class$class_fidelity %in% "High", ],
+#        aes(time, pct_good, group = class_fidelity)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1,
+#                                 fun.args=list(conf.int=.95)) +
+#   facet_grid(. ~ lc) +
+#   xlab("Time of Measurement") +
+#   ylab("Avg. Percent of Class that Agrees or Strongly Agrees") +
+#   ggtitle("Changes in classroom learning-condition percent-good scores across classroom implementation fidelity") +
+#   labs(color="Classroom Implementation Fidelity")
+
+
+```
+
+\newpage
+
+## Did effort and mindsets increase pre-post in high-fidelity classrooms?
+
+Based on simple t-tests comparing pre- and post-scores, it appears that self-reported effort and mindsets did not significantly increase pre-post in high-fidelity classrooms.
+
+```{r}
+
+effort_t_test_result <- t.test(d_ftl_high_fidelity$effort_ftl, mu = 0)
+gms_t_test_result <- t.test(d_ftl_high_fidelity$gms_ftl, mu = 0)
+belonging_t_test_result <- t.test(d_ftl_high_fidelity$belonging_ftl, mu = 0)
+
+```
+
+\newpage
+
+## LCs correlate with growth mindset and belonging
+
+```{r}
+
+# Simple correlations
+lc_gms_cor_test <- cor.test(d$gms, d$comb_lc_score) # .22
+lc_belonging_cor_test <- cor.test(d$belonging, d$comb_lc_score) # .45  <--- so high!
+
+```
+
+We also hypothesized that student self-reported learning conditions would correlate with students' self-reported degree of growth mindset and sense of belonging. Indeed, learning conditions correlated with growth mindset (r = `r round(lc_gms_cor_test$estimate, 2)`, p < .001) and with sense of belonging (r = `r round(lc_belonging_cor_test$estimate, 2)`, p < .001). These results also held when controlling for student demographics and class/teacher/team placement:
+
+```{r, results='asis'}
+# Controlling for covariates
+lc_gms_concurrent_mod <- lmer(gms ~ comb_lc_score + gender + race + prior_gpa + 
+               ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d)
+lc_belonging_concurrent_mod <- lmer(belonging ~ comb_lc_score + gender + race + prior_gpa + 
+               ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d)
+class(lc_gms_concurrent_mod) <- "lmerMod"
+class(lc_belonging_concurrent_mod) <- "lmerMod"
+stargazer(lc_gms_concurrent_mod, lc_belonging_concurrent_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "LCs correlate with growth mindset and belonging")
+
+```
+
+\newpage
+
+## Changes in LCs correlate with changes in growth mindset and belonging
+
+We hypothesized above that LCs would correlate with growth mindset and belonging at a given time point. But we also hypothesized that *changes* in student LCs over time would correlate with changes in growth mindset and belonging. The data supported our hypothesis: changes in student LCs from their first to last measurement correlated with changes in self-reported growth mindset and belonging for those same students, even controlling for student demographics, class/teacher/team placement, and time-1 LCs and mindsets.
+
+```{r, results='asis'}
+
+######### Relationships between changes over time
+
+##### Growth mindset:
+# singular fit
+# summary(lmer(gms_ftl ~ comb_lc_score_ftl + comb_lc_score_first +
+#                gender + race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = filter(d_ftl, n_gms > 1)))
+# This runs
+# lmer(gms_ftl ~ comb_lc_score_ftl + comb_lc_score_first +
+#                prior_gpa + ( 1 | team_id ),
+#              data = filter(d_ftl,
+#                            n_gms > 1))
+# What about controlling for time-1 mindset? Still significant! + expected regression to the mean.
+lc_gms_delta_mod <- lmer(gms_ftl ~ comb_lc_score_ftl + comb_lc_score_first + gms_first +
+               prior_gpa + ( 1 | team_id ),
+             data = filter(d_ftl,
+                           n_gms > 1))
+
+##### Belonging:
+# Model failed to converge
+# summary(lmer(belonging_ftl ~ comb_lc_score_ftl + comb_lc_score_first +
+#                gender + race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = filter(d_ftl, n_belonging > 1)))
+# This runs
+# summary(lmer(belonging_ftl ~ comb_lc_score_ftl + comb_lc_score_first +
+#                prior_gpa + ( 1 | team_id ),
+#              data = filter(d_ftl, n_belonging > 1)))
+# What about controlling for time-1 mindset? Still significant! + expected regression to the mean.
+lc_belonging_delta_mod <- lmer(belonging_ftl ~ comb_lc_score_ftl + comb_lc_score_first + belonging_first +
+               prior_gpa + ( 1 | team_id ),
+             data = filter(d_ftl,
+                           n_belonging > 1))
+
+
+class(lc_gms_delta_mod) <- "lmerMod"
+class(lc_belonging_delta_mod) <- "lmerMod"
+stargazer(lc_gms_delta_mod, lc_belonging_delta_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "Changes in LCs correlate with changes in growth mindset and belonging")
+
+
+d_ftl_mindset_melt <- melt(d_ftl,
+                           id.vars = c("student_id", "n_gms", "n_belonging", "comb_lc_score_ftl"),
+                           measure.vars = c("gms_ftl", "belonging_ftl"))
+d_ftl_mindset_melt$variable <- d_ftl_mindset_melt$variable %>%
+  as.character() %>%
+  util.recode(c("gms_ftl", "belonging_ftl"),
+              c("Change in Growth Mindset", "Change in Belonging"))
+
+ggplot(filter(d_ftl_mindset_melt,
+              n_gms > 1,
+              n_belonging > 1),
+       aes(comb_lc_score_ftl, value)) +
+  geom_smooth(method = lm) +
+  geom_point(alpha = .2) +
+  facet_grid(. ~ variable) +
+  xlab("Change in LC score (first to last measure)") +
+  ylab("Change in mindset score (first to last measure)") +
+  ggtitle("Changes in learning conditions correlate with\nchanges in growth mindset and belonging")
+
+```
+
+\newpage
+
+## Understanding group differences in specific LCs
+
+In general, marginalized students report slightly higher LCs than do non-marginalized students. In this sample, this is most apparent in Teacher Caring. Gender differences are minimal.
+
+```{r}
+
+# Individual LCs
+d_first_m <- melt(d_first,
+            id.vars = c("student_id", "race", "gender"),
+            measure.vars = c("fg", "mw", "tc"))
+ggplot(filter(d_first_m,
+              !is.na(gender),
+              !is.na(race),
+              !gender %in% "masked"),
+       aes(race, value, fill = gender)) +
+  geom_bar(stat = "summary", fun.y = "mean", position = position_dodge()) +
+  ug.se_error_bar +
+  facet_grid(. ~ variable) +
+  coord_cartesian(ylim=c(4, 6.5))
+
+```
+
+
+\newpage
+
+## Moderation of concurrent LC-effort relationship by group status
+
+Results suggest that the relationship between LCs (individually or together) and concurrent effort is stronger for male/nonbinary students. No race/ethnicity differences were found.
+
+```{r, results='asis'}
+
+######## Comb-LC-score x group predicting concurrent effort
+
+# LCs more correlated w effort for male students?
+# statistically significant... graph suggests that going from 6 to 7 matters more for male students?
+lc_group_effort_mod <- lmer(effort ~ comb_lc_score*gender + race + prior_gpa + 
+               ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+             data = d)
+class(lc_group_effort_mod) <- "lmerMod"
+stargazer(lc_group_effort_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "The relationship between LCs and concurrent effort is stronger for male/nonbinary students")
+
+
+ggplot(filter(d, !is.na(gender) & !gender %in% "masked"),
+       aes(comb_lc_score, effort, color = gender)) +
+  geom_smooth()
+
+# no moderation by race (lmer failed to converge)
+# lmer(effort ~ comb_lc_score*race + gender + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# lm(effort ~ comb_lc_score*race + gender + prior_gpa,
+#              data = d) %>% summary()
+
+
+######## Individual LCs x groups predicting concurrent effort
+
+##### Gender - clear relationships
+# # fg - yes
+# lmer(effort ~ fg*gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # mw - yes
+# lmer(effort ~ mw*gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # tc - yes
+# lmer(effort ~ tc*gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# 
+# ##### Race - little to no relationship
+# # fg - no
+# lmer(effort ~ fg*race + gender + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # mw - marg in opposite direction (non-marg have tighter relationship between mw and effort?)
+# lmer(effort ~ mw*race + gender + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # tc - no
+# lmer(effort ~ tc*race + gender + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+
+```
+
+
+## No moderation of LC-expected-grades relationship by group status
+
+We did not find any moderation of the relationship between LCs and expected grades by group status. (See Rmd for lmer models.)
+
+```{r}
+
+######## Comb-LC-score x group predicting concurrent expected-grades
+
+# # LCs more correlated w expected-grades for male students? No.
+# lmer(expected_grade ~ comb_lc_score*gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # no moderation by race either.
+# lmer(expected_grade ~ comb_lc_score*race + gender + prior_gpa +
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+
+
+######## Individual LCs x groups predicting concurrent expected_grade
+
+##### Gender - no
+# # fg - no
+# lmer(expected_grade ~ fg*gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # mw - no
+# lmer(expected_grade ~ mw*gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # tc - no
+# lmer(expected_grade ~ tc*gender + race + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# ##### Race - no
+# # fg - no
+# lmer(expected_grade ~ fg*race + gender + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # mw - significant in negative direction for masked students... hard to interpret
+# lmer(expected_grade ~ mw*race + gender + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+# # tc - no
+# lmer(expected_grade ~ tc*race + gender + prior_gpa + 
+#                ( 1 | student_id ) + ( 1 | teacher_id ) + ( 1 | team_id ),
+#              data = d) %>% summary()
+
+```
+
+
+## Moderation of LC improvement by group status (in high-fidelity classes)
+
+We did not find any moderation of LC improvement by group status. (See Rmd for lmer models.)
+
+```{r, results='asis'}
+
+######## Time x group-status predicting comb_lc_score value - no relationships.
+# lmer(value ~ variable * race + gender + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long) %>% summary()
+# lmer(value ~ variable * gender + race + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long) %>% summary()
+
+
+######## Time x group-status predicting individual LC values - no relationships.
+# ### fg - no
+# lmer(value ~ variable * race + gender + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long_fg) %>% summary()
+# lmer(value ~ variable * gender + race + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long_fg) %>% summary()
+# ### mw - no
+# lmer(value ~ variable * race + gender + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long_mw) %>% summary()
+# lmer(value ~ variable * gender + race + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long_mw) %>% summary()
+# ### tc - no
+# lmer(value ~ variable * race + gender + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long_tc) %>% summary()
+# lmer(value ~ variable * gender + race + prior_gpa + (1 | team_id),
+#   d_ftl_high_fidelity_long_tc) %>% summary()
+
+
+
+```
+
+## Moderation of delta-LC and delta-effort relationship by group status and prior GPA.
+
+We found evidence that the link between changes in LCs and changes in effort is weaker for students from marginalized backgrounds. But we did not find this pattern in the score for any specific individual LC.
+
+We also found that the relationship between increased LCs and increased effort is stronger for students with a lower prior GPA. (The intuitive explanation is "LCs matter more for effort more for lower-performing students.")
+
+```{r, results='asis'}
+
+######### delta-LC-score * group predicting delta-effort - seeing a race relationship
+
+# # No gender relationship
+# lmer(effort_ftl ~ comb_lc_score_ftl * gender + comb_lc_score_first + effort_first +
+#                 race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+
+# Race relationship - the LC-effort link is weaker for marg students?
+lc_delta_effort_group_mod <- lmer(effort_ftl ~ comb_lc_score_ftl * race + comb_lc_score_first +
+                gender + prior_gpa +
+               ( 1 | class_id ) + ( 1 | teacher_id ) +
+               ( 1 | team_id ),
+             data = d_ftl)
+class(lc_delta_effort_group_mod) <- "lmerMod"
+stargazer(lc_delta_effort_group_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "The relationship between delta-LCs and delta-effort is weaker for marginalized-group students")
+
+# Marginal when you include t1 effort...
+# lmer(effort_ftl ~ comb_lc_score_ftl * race + comb_lc_score_first + effort_first +
+#                 gender + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+
+# interesting graph...
+ggplot(filter(d_ftl, !is.na(race)),
+       aes(comb_lc_score_ftl, effort_ftl, color = race)) +
+  geom_smooth() +
+  geom_point(alpha = .2) +
+  ggtitle("The relationship between delta-LCs and delta-effort is weaker for marginalized-group students")
+
+# but maybe driven by two outlier points where effort_ftl = 4
+# ggplot(filter(d_ftl, !is.na(race), effort_ftl < 4),
+#        aes(comb_lc_score_ftl, effort_ftl, color = race)) +
+#   geom_smooth() +
+#   geom_point(alpha = .2)
+
+
+######### delta specific LCs * group predicting delta-effort - no relationships.
+
+# ##### FG
+# 
+# # No gender relationship
+# lmer(effort_ftl ~ fg_ftl * gender + fg_first +
+#                 race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+# # No race relationship
+# lmer(effort_ftl ~ fg_ftl * race + fg_first +
+#                 gender + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+# 
+# 
+# ##### MW
+# 
+# # No gender relationship
+# lmer(effort_ftl ~ mw_ftl * gender + mw_first +
+#                 race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+# # No race relationship (close to marginal)
+# lmer(effort_ftl ~ mw_ftl * race + mw_first +
+#                 gender + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+# 
+# 
+# ##### TC
+# 
+# # No gender relationship
+# lmer(effort_ftl ~ tc_ftl * gender + tc_first +
+#                 race + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+# # No race relationship
+# lmer(effort_ftl ~ tc_ftl * race + tc_first +
+#                 gender + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+
+
+
+# What about moderation by prior-gpa? Yes, when you include t1 effort!
+lc_delta_effort_gpa_mod<- lmer(effort_ftl ~ comb_lc_score_ftl * prior_gpa + gender + comb_lc_score_first +
+                race + effort_first +
+               ( 1 | class_id ) + ( 1 | teacher_id ) +
+               ( 1 | team_id ),
+             data = d_ftl)
+class(lc_delta_effort_gpa_mod) <- "lmerMod"
+stargazer(lc_delta_effort_gpa_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "The relationship between delta-LCs and delta-effort is stronger for lower-prior-GPA students")
+
+
+```
+
+## Moderation of delta-LC and delta-mindset relationship by group status
+
+We did not find any moderation of the delta-LC and delta-mindset relationship by group status. (See Rmd for lmer models.)
+
+```{r}
+
+######### delta-LC-score * group predicting delta-GMS - nothing
+
+# # gender
+# # singular fit
+# # lmer(gms_ftl ~ comb_lc_score_ftl * gender + comb_lc_score_first +
+# #                 race + prior_gpa +
+# #                ( 1 | class_id ) + ( 1 | teacher_id ) +
+# #                ( 1 | team_id ),
+# #              data = d_ftl) %>% summary()
+# lm(gms_ftl ~ comb_lc_score_ftl * gender + comb_lc_score_first +
+#                 race + prior_gpa,
+#              data = d_ftl) %>% summary()
+# lm(gms_ftl ~ comb_lc_score_ftl * gender + comb_lc_score_first + gms_first +
+#                 race + prior_gpa,
+#              data = d_ftl) %>% summary()
+# 
+# 
+# # race
+# # singular fit
+# # lmer(gms_ftl ~ comb_lc_score_ftl * race + comb_lc_score_first +
+# #                 gender + prior_gpa +
+# #                ( 1 | class_id ) + ( 1 | teacher_id ) +
+# #                ( 1 | team_id ),
+# #              data = d_ftl) %>% summary()
+# lm(gms_ftl ~ comb_lc_score_ftl * race + comb_lc_score_first +
+#                 gender + prior_gpa,
+#              data = d_ftl) %>% summary()
+# lm(gms_ftl ~ comb_lc_score_ftl * race + comb_lc_score_first + gms_first +
+#                 gender + prior_gpa,
+#              data = d_ftl) %>% summary()
+# 
+# 
+# 
+# ######### delta-LC-score * group predicting delta-belonging - nothing
+# 
+# # gender
+# # singular fit
+# # lmer(belonging_ftl ~ comb_lc_score_ftl * gender + comb_lc_score_first +
+# #                 race + prior_gpa +
+# #                ( 1 | class_id ) + ( 1 | teacher_id ) +
+# #                ( 1 | team_id ),
+# #              data = d_ftl) %>% summary()
+# lm(belonging_ftl ~ comb_lc_score_ftl * gender + comb_lc_score_first +
+#                 race + prior_gpa,
+#              data = d_ftl) %>% summary()
+# lm(belonging_ftl ~ comb_lc_score_ftl * gender + comb_lc_score_first + belonging_first +
+#                 race + prior_gpa,
+#              data = d_ftl) %>% summary()
+# 
+# 
+# # race
+# lmer(belonging_ftl ~ comb_lc_score_ftl * race + comb_lc_score_first +
+#                 gender + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+# lmer(belonging_ftl ~ comb_lc_score_ftl * race + comb_lc_score_first + belonging_first +
+#                 gender + prior_gpa +
+#                ( 1 | class_id ) + ( 1 | teacher_id ) +
+#                ( 1 | team_id ),
+#              data = d_ftl) %>% summary()
+
+# Haven't checked for individual LCs, but it's not looking promising so far.
+
+```
+
+
+```{r}
+# sg's analyses
+# now make a version with all lc's combined
+d_ftl_class_lcs_combined <- d_lc_ftl_m %>%
+  group_by(class_id, time, question) %>%
+  summarise(pct_good = sum(good, na.rm = T)/n()) %>%
+  summarise(pct_good = mean(pct_good, na.rm = T))
+
+# label whether they are in a high-fidelity class
+d_ftl_class_lcs_combined$class_fidelity <- ifelse(
+    d_ftl_class_lcs_combined$class_id %in% high_fidelity_classes,"High", "Low"
+    )
+
+d_hist <- dplyr::filter(d_ftl_class_lcs_combined, class_fidelity %in% "Low") %>%
+    dcast(class_id ~ time, value.var = "pct_good") %>%
+    rename(lc_first = first, lc_last = last) %>%
+    mutate(change = lc_last - lc_first)
+
+
+
+
+```

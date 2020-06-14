@@ -1,0 +1,172 @@
+---
+# output: 
+#   html_document:
+#     fig_caption: no
+#     toc: no
+#     theme: spacelab
+#     css: rmd_styles.css
+title: "Creating EP 2018-2019 test data"
+author: "Daniel Greene"
+date: "August 11, 2018"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+---
+
+
+# Introduction
+
+This script is for transforming test data for the EP 2018-2019 pilot. The test data was originally created using Qualtrics' tool for creating test responses, as described here:
+https://docs.google.com/document/d/1FqwfjLKLcJJknfE8AZcy6aVHiJjiuzqpRz1QsfTNE_Y/edit#
+
+What aspects of the data need to be fixed here?
+- Participant_id and token are currently fixed test values and need to be changed or randomized to match new and old participants as described in the doc above.
+- The dates and times need to be fixed.
+- The survey-id needs to be the real thing for all responses.
+
+Setup:
+
+```{r, results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+############### LOAD DATA #####################################
+
+setwd("~/Sites/analysis/engagement_diagnostic/Creating EP 2018-2019 test data")
+
+d_raw <- read.csv("ORIGINAL - Engagement_Project_OFFICIAL_20182019.csv")
+
+d <- read.csv("ORIGINAL - Engagement_Project_OFFICIAL_20182019.csv") %>% qc.clean_qualtrics()
+
+```
+
+Fix survey ID:
+
+```{r}
+
+d$survey_id <- "Survey_n3PKCxt8"
+
+```
+
+Fix start-dates and end-dates:
+
+```{r}
+
+# Make total survey completion time an arbitrary 5 minutes (300 seconds)
+d$Q_TotalDuration <- 300
+
+# The intended fictional start and end dates are hidden in the value of the "testing" string. Use those.
+d$StartDate[grep("week_8_6", d$testing)] <- "2018-08-06 13:26:47"
+d$StartDate[grep("week_8_13", d$testing)] <- "2018-08-13 13:26:47"
+d$StartDate[grep("week_8_20", d$testing)] <- "2018-08-20 13:26:47"
+d$EndDate[grep("week_8_6", d$testing)] <- "2018-08-06 13:31:47"
+d$EndDate[grep("week_8_13", d$testing)] <- "2018-08-13 13:31:47"
+d$EndDate[grep("week_8_20", d$testing)] <- "2018-08-20 13:31:47"
+
+# Confirm that all start and end dates have been changed
+stopifnot(all(d$StartDate %in% c("2018-08-06 13:26:47", "2018-08-13 13:26:47", "2018-08-20 13:26:47")))
+stopifnot(all(d$EndDate %in% c("2018-08-06 13:31:47", "2018-08-13 13:31:47", "2018-08-20 13:31:47")))
+
+
+```
+
+Fix participant IDs and tokens based on notes in GDoc linked in the intro.
+
+
+```{r}
+
+# token is classroom code + a number.
+# using very rigid coding of row numbers here to confirm numbers of responses.
+
+# Class_A1 "quick collard":
+## Week 1:
+### 1-20 (new)
+d[d$StartDate %in% "2018-08-06 13:26:47" & d$code %in% "quick collard", "token"] <- "quick collard " %+% c(1:20)
+## Week 2:
+### 6-20 (old)
+d[d$StartDate %in% "2018-08-13 13:26:47" & d$code %in% "quick collard" &
+    d$first_login %in% "false", "token"] <- "quick collard " %+% c(6:20)
+### 21-35 (new)
+d[d$StartDate %in% "2018-08-13 13:26:47" & d$code %in% "quick collard" &
+    d$first_login %in% "true", "token"] <- "quick collard " %+% c(21:35)
+## Week 3:
+### 6-35 (old)
+d[d$StartDate %in% "2018-08-20 13:26:47" & d$code %in% "quick collard" &
+    d$first_login %in% "false", "token"] <- "quick collard " %+% c(6:35)
+### 36-40 (new)
+d[d$StartDate %in% "2018-08-20 13:26:47" & d$code %in% "quick collard" &
+    d$first_login %in% "true", "token"] <- "quick collard " %+% c(36:40)
+
+
+
+# Class_B1 "peach turtle":
+## Week 1:
+### 1-20 (new)
+d[d$StartDate %in% "2018-08-06 13:26:47" & d$code %in% "peach turtle", "token"] <- "peach turtle " %+% c(1:20)
+## Week 2:
+### 6-20 (old)
+d[d$StartDate %in% "2018-08-13 13:26:47" & d$code %in% "peach turtle" &
+    d$first_login %in% "false", "token"] <- "peach turtle " %+% c(6:20)
+### 21-35 (new)
+d[d$StartDate %in% "2018-08-13 13:26:47" & d$code %in% "peach turtle" &
+    d$first_login %in% "true", "token"] <- "peach turtle " %+% c(21:35)
+## Week 3:
+### 6-35 (old)
+d[d$StartDate %in% "2018-08-20 13:26:47" & d$code %in% "peach turtle" &
+    d$first_login %in% "false", "token"] <- "peach turtle " %+% c(6:35)
+### 36-40 (new)
+d[d$StartDate %in% "2018-08-20 13:26:47" & d$code %in% "peach turtle" &
+    d$first_login %in% "true", "token"] <- "peach turtle " %+% c(36:40)
+
+
+# Class_B2 "turtle bronze":
+## Week 1:
+### 1-20 (new)
+d[d$StartDate %in% "2018-08-06 13:26:47" & d$code %in% "turtle bronze", "token"] <- "turtle bronze " %+% c(1:20)
+
+
+# Confirm that there is no more "test_token"
+stopifnot(!"test_token" %in% d$token)
+
+# Simply name participant IDs as "participant " + token
+d$participant_id <- "participant " %+% d$token
+
+```
+
+"De-clean" the data back into weird original Qualtrics format and save result to CSV to be re-uploaded to Qualtrics.
+
+```{r}
+
+d_decleaned <- d
+names(d_decleaned) <- names(d_raw)
+d_decleaned <- rbind(d_raw[1, ], d_decleaned)
+
+write.csv(d_decleaned, "MODIFIED - Engagement_Project_OFFICIAL_20182019.csv",
+          na = "",
+          row.names = FALSE)
+
+```

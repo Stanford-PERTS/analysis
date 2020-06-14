@@ -1,0 +1,1061 @@
+---
+# output: 
+#   html_document:
+#     fig_caption: no
+#     toc: no
+#     theme: spacelab
+#     css: rmd_styles.css
+title: "Engagement Project - Spring 2018 Analysis of Measures"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+---
+
+
+# Introduction
+The PERTS Engagement Project aims to help educators systematically
+identify and remove psychological barriers to student engagement. 
+PERTS developed several new, practical measures in order to help educators
+quickly assess their students' perceptions of key learning conditions (LCs). 
+The assessed learning conditions were chosen because prior research suggested 
+that they foster student engagement, resilience, and success. 
+Those conditions are described later in this document,
+see [Learning Conditions](#Learning-Conditions). 
+
+PERTS strove to develop measures that would meet all of the 
+following criteria:
+
+* Face-valid to teachers as important and  within their control:
+This was considered important because teachers 
+would be unwilling to try to improve conditions that they believed were 
+unimportant or outside their control. 
+* Sensitive to week-to-week changes in students' experiences in a given class: 
+This was considered important because the aim of the Engagement Project was to 
+give educators rapid feedback for improvement, 
+and such feedback would be of limited utility 
+if it were not sensitive to changes in students' experiences.
+* Non-proprietary: This was considered important because we wanted flexibility 
+to adjust the measures and use them for a variety of purposes at scale.
+
+
+## About this Document
+This document describes the properties of the new, learning condition measures
+utilized thus far in the PERTS Engagement Project.
+These results should not be assumed to be generalizable beyond the 
+specific — and very unusual — context of the Engagement Project.
+These analyses are intended strictly to help PERTS and its partners identify 
+opportunities to improve the quality of the services they offer to schools. 
+As such, this document is only intended for internal review by PERTS staff and 
+close partners. Do not share or cite this document without permission. 
+
+
+```{r, results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+library(corrplot)
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+RMD_BASE_PATH       <- "~/Sites/analysis/engagement_diagnostic/"
+
+#find crypt and repository folders
+home_dirs <- util.list_dirs('~')
+REPOSITORY_FOLDER <- home_dirs[grep("engagement_diagnostic$", home_dirs)]
+
+# set working directory to repo
+setwd(RMD_BASE_PATH)
+
+
+processed_data_file_names <- list(
+  "processed_data" = "EP metascript processed data imputed.csv"
+)
+# options for input:
+# "EP metascript processed data imputed.csv"  <--- the original non-anon data
+# "k_anonymized_2018_EP_data.csv"  <--- k-anon EP data
+
+options(xtable.comment = FALSE)
+
+```
+
+
+```{r, results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+
+############### LOAD DATA #####################################
+
+if( ! exists("DATA_LOADED")){
+    processed_data <- util.find_crypt_paths(processed_data_file_names)
+    data_list <- processed_data %>%
+        util.read_csv_files()
+    
+    
+    # if there's more than one data file, rbind them
+    # together, keeping only the columns they share in common.
+    # otherwise, data is just the first element in the list.
+    if(length(data_list) > 1){
+        data <- util.rbind_union(data_list)
+    } else{
+        data <- data_list[[1]]
+    }
+    DATA_LOADED <- TRUE
+}
+
+
+```
+
+```{r, results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+
+############### If the data are k-anon, do some cleanup  #####################################
+
+if("k_anonymized_2018_EP_data.csv" %in% processed_data_file_names$processed_data) {
+  
+  # for each key anonymized variable...
+  for(var in c("race___3", "gender___4")) {
+    # Set "n/a" to NA
+    data[, var][grepl("n/a", data[, var])] <- NA
+    # Set "__masked__" to NA
+    data[, var][grepl("__masked__", data[, var])] <- NA
+  }
+  
+  # rename anonymized variables to be the ones used in the rest of the script
+  data$race_cat <- data$race___3
+  data$gender <- data$gender___4
+  
+}
+
+
+############### Make Short Unique ID  #####################################
+# because the comb_id is gnarly
+unique_comb_ids <- unique(data$comb_id)
+data$uid <- util.recode(data$comb_id, 
+                        unique_comb_ids, 
+                        1:length(unique_comb_ids))
+
+
+############### DROP UNLABELED COLUMNS #####################################
+
+unlabeled_columns <- grepl("Q[0-9]_[0-9]|Q[0-9][0-9]_[0-9]", names(data))
+names(data)[unlabeled_columns]
+dl <- data[, ! unlabeled_columns]   # dl = data-labeled
+
+# trying to figure out how these data are structured
+participant_counts <- dl %>%
+                        group_by(comb_id) %>%
+                        summarise(appearances = n(),
+                                  unimputed = sum(!imputed_row))
+# key observations:
+#   data are of long form indexed on comb_id x week_start
+#   imputed_row clarifies whether a given row was imputed or not
+
+############### RETAIN ONLY UNIMPUTED ROWS ###################################
+du <- dl[ ! dl$imputed_row, ]   # du = data-unimputed
+
+
+# is id_instance the ordinal of the comb_id's appearance?
+# No! instance IDs don't go up as a function of when date within user
+set.seed(123)
+sample_ids <- sample(du$comb_id,8)
+index_cols <- c("uid","week_start","id_instance")
+check_id_instance <- du[du$comb_id %in% sample_ids ,] %>%
+    arrange_( .dots=index_cols ) %>%
+    select_( .dots=index_cols )
+
+# create survey_ordinal to indicate which survey instance it was for the user
+du <- du %>%
+    group_by(uid) %>%
+    arrange(uid, week_start) %>%
+    mutate( survey_ordinal=row_number()) %>% 
+    ungroup()
+
+# check whether survey ordinals increment up by week within user
+# They are!
+set.seed(123)
+sample_ids <- sample(du$uid,8)
+index_cols <- c("uid","week_start","survey_ordinal")
+check_id_instance <- du[du$uid %in% sample_ids ,] %>%
+    arrange_( .dots=index_cols ) %>%
+    select_( .dots=index_cols )
+
+
+```
+
+```{r, message=FALSE, warning=FALSE, eval = TRUE, echo=FALSE}
+
+############### Key Variables ###############################
+control_vars_cat <- c("gender","race_cat","race_1","va_grade_1")
+control_vars_numeric <- c("ba_gpa_1")
+control_vars_all <- c(control_vars_cat, control_vars_numeric)
+fidelity <- c("teacher_use_qs","honest_comfort","rushing")
+
+# lc items
+fg_qs <- c("fg1_1","fg2_1","fg3_1")
+tc_qs <- c("tc1_1","tc2_1","tc4_1")
+mw_qs <- c("mw1_1","mw2_1","mw3_1")
+
+# scales (created below)
+lcs <- c("fg","mw","tc")
+eng <- c("eng_1","attn","hmwrk")
+
+# traditional psychometrics
+gms_qs <- c("gms_2.0","gms_3.0","gms_3.1")
+belong_qs <- c("belong_2.0","belong_3.0")
+mastery_qs <- c("mastery1","mastery2") 
+expectations <- c("va_college_1")
+
+traditionals <- c(gms_qs, belong_qs, mastery_qs, expectations)
+
+#### recode race_cat because ampersands make tex problems
+du$race_cat <- ifelse( du$race_cat %in% c("White & Asian"),
+                        "Advantaged",
+                        "Marginalized")
+
+############### Create new variables ###############################
+
+du$week_start_date <- as.POSIXct(du$week_start)
+
+##### response_quality #####
+## combination of comfortable answering honestly, not rushing, and 
+## believing teacher will use responses to improve
+
+du$response_quality <- "Acceptable"
+du$response_quality[du$rushing %in% c(3,4,5)] <- "Unacceptable"
+du$response_quality[du$honest_comfort %in% 2] <- "Unacceptable"
+
+du <- du %>%
+        group_by(uid) %>%
+        mutate(response_quality = max(response_quality) ) %>%
+        ungroup
+
+```
+
+# Key Variables
+
+## Learning Conditions
+
+Three separate learning conditions (LCs) were assessed over the course of the 
+Engagement Project. See [perts.net/conditions](http://perts.net/conditions) 
+for more detailed descriptions of 
+these conditions and the questions used to assess them.
+
+* Teacher Caring — The extent to which students feel their teachers are
+respectful and supportive. 
+* Feedback for Growth — The extent to which students see their teachers as 
+providing them with feedback that is intended to help them grow as learners.
+* Meaningful Work — The extent to which students believe the work they are 
+doing in class is both relevant to their current or future goals. 
+
+
+All three learning condition scales had acceptable internal reliabilities. 
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, results="asis", fig.height=3}
+
+############### Compute LC scales ###############################
+
+alphas_df <- data.frame(Scale="", Alpha="")
+
+# subset time 1 data to run the stats
+s1_scales <- du[du$survey_ordinal %in% 1,] %>% ungroup()
+
+# they all clock in at above alpha = .7
+scale_alpha <- s1_scales[,fg_qs] %>% 
+    as.data.frame() %>%
+    psych::alpha()
+alphas_df[1,] <- c("Feedback for Growth (fg)", 
+                    scale_alpha$total$raw_alpha) 
+
+scale_alpha <- s1_scales[,tc_qs] %>% 
+    as.data.frame() %>%
+    psych::alpha()
+alphas_df[2,] <- c("Teacher Caring (tc)", 
+                    scale_alpha$total$raw_alpha) 
+
+scale_alpha <- s1_scales[,mw_qs] %>% 
+    as.data.frame() %>%
+    psych::alpha()
+alphas_df[3,] <- c("Meaningful Work (mw)", 
+                    scale_alpha$total$raw_alpha) 
+
+alphas_df$Alpha <- round(as.numeric(alphas_df$Alpha), 2)
+alphas_df %>% 
+    xtable() %>% 
+    print(include.rownames=FALSE)
+
+# compute the scales
+du$fg <- rowMeans(du[,fg_qs], na.rm=T)
+du$tc <- rowMeans(du[,tc_qs], na.rm=T)
+du$mw <- rowMeans(du[,mw_qs], na.rm=T)
+
+du[du$survey_ordinal %in% 1,c("fg","tc","mw")] %>% 
+    describe() %>% 
+    xtable()
+
+melted_tcs <- du[du$survey_ordinal %in% 1,c("uid","fg","tc","mw")] %>%
+    melt(id.vars="uid") %>%
+    ungroup
+
+ggplot(melted_tcs, aes(value, color=variable) ) +
+    geom_density(adjust=3) +
+    scale_y_continuous(labels=percent) +
+    scale_color_brewer(palette = "Set1") 
+
+```
+
+
+```{r, message=FALSE, warning=FALSE, eval = TRUE, echo=FALSE, results="hide"}
+
+## Append control variables to every row
+# (right now they're only in the row where they were collected)
+
+first_present_value <- function(x){
+    present <- x[util.is_present(x)] %>%
+        unique
+    if(length(unique) == 0){
+        first_present <- NA
+    } else{
+        first_present <- present[1]
+    }
+    return(first_present)
+}
+
+du_ctrl <- du %>%
+            group_by(uid) %>%
+            summarise(
+                gender   = first_present_value(gender),
+                race_cat = first_present_value(race_cat),
+                race_1   = first_present_value(race_1),
+                ba_gpa_1 = first_present_value(ba_gpa_1),
+                va_grade_1 = first_present_value(va_grade_1)
+            ) %>% ungroup
+
+du_ctrl$ba_gpa_1 %>% util.is_present %>% mean
+du_ctrl[,control_vars_all] %>% 
+    ds.summarize_by_column()
+
+du <- merge( du[, ! names(du) %in% control_vars_all], 
+              du_ctrl, 
+              by="uid")
+
+
+############### Mysteries ###############################
+
+## va_grade_1 in qualtrics appears to be an expecations variable
+## ("What grade do you expect in this class?")
+## But in the dataset the responses are 1st, 3rd, 4th, 5th, and 6th grade
+## @todo: Wait to hear back from Dan. 
+table(du$va_grade_1)
+
+
+```
+
+
+## Validation Measures
+
+A variety of "validation measures" were added to surveys to confirm that LCs 
+measures manifest the expected relationships to related constructs. 
+However, validation measures were collected less frequently to prevent survey
+fatigue. They were also often 
+removed or substituted in response to feedback from participating students 
+and teachers. 
+For example, language was simplified and new measures were substituted when 
+teachers reported that students had a hard time understanding a question.
+
+Consequently, sample sizes for validation measures are still quite limited. 
+None of them — besides effort, which was collected in every survey — 
+had enough observations for change scores to be computed over 
+time. However, several had over 1000 observations from at least the initial 
+measurement point. Those measures are listed below.
+
+* Effort (eng_1) - "This week in this class, I tried my very best..." 
+from "Almost none of the time" to "Almost all of the time." 
+* College Aspirations (va_college_1) -   
+"Do you think you will go to college?" 
+from "Probably not" to "Definitely." 
+* Prior GPA (ba_gpa_1) - Reported by students the first time they completed an 
+Engagement Project survey.
+* Comfort in Classes (belong_2.0) - 
+"I feel comfortable in classes in my school."
+* Growth Mindset (gms_2.0) - 
+"Imagine a student who thinks that people can get 
+smarter if they work really hard. How much do you agree with that student?"
+
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE, results="asis"}
+
+key_validation <- c("ba_gpa_1", "va_college_1", "eng_1","belong_2.0","gms_2.0")
+
+# du[du$survey_ordinal %in% 1, traditionals] %>% 
+#     describe() %>% 
+#     xtable()
+
+############### Are validation question present? #############################
+du[du$survey_ordinal %in% 1, key_validation] %>% 
+    describe() %>% 
+    xtable()
+
+# consider validation questions present if at least 1 is present
+du$va_present <- 0 < du[,key_validation] %>%
+    util.is_present() %>% 
+    rowSums()
+
+############### When were validation questions used? #########################
+
+# present_traditionals <- du[,c("week_start_date",key_validation)] %>%
+#     melt(id.vars="week_start_date") %>%
+#     group_by( variable, week_start_date ) %>%
+#     summarise( present=sum(util.is_present(value), na.rm=T)) %>%
+#     ungroup
+# 
+# ggplot(present_traditionals, aes(week_start_date, present) ) +
+#     geom_line() + 
+#     facet_wrap( ~ variable ) +
+#     xlab("") + ylab("Number present") +
+#     ggtitle("Participants asked each question by week")
+
+
+```
+
+# Relationships Between Variables
+
+## Time 1 Correlations
+
+Looking strictly at the first time when students signed in (Time 1), 
+LCs and validation measures correlated largely as expected. 
+
+```{r, message=FALSE, echo=FALSE, results='asis', fig.height=4 }
+
+correlation_vars <- c(
+    lcs,
+    key_validation
+)
+
+dcor <- du[du$survey_ordinal %in% 1,]
+cor( dcor[, correlation_vars], use="pairwise" ) %>% 
+    corrplot( type="lower", method = "number", tl.col = "black")
+
+```
+
+## Demographics
+
+Surprisingly, members of marginalized groups experienced class work as more 
+meaningful and reported getting more feedback for growth. Females reported 
+more teacher caring and investing more effort into their schoolwork. 
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE, results='asis', fig.height=5.5 }
+
+mw_mod <- lme4::lmer( mw ~ race_cat + gender +
+        ( 1 | class_id ) + ( 1 | team_id ) + ( 1 | week_start ),
+        data=du[du$survey_ordinal %in% 1,] )
+
+tc_mod <- lme4::lmer( tc ~ race_cat + gender +
+        ( 1 | class_id ) + ( 1 | team_id ) + ( 1 | week_start ),
+        data=du[du$survey_ordinal %in% 1,] )
+
+fg_mod <- lme4::lmer( fg ~ race_cat + gender +
+        ( 1 | class_id ) + ( 1 | team_id ) + ( 1 | week_start ),
+        data=du[du$survey_ordinal %in% 1,] )
+
+eng_1_mod <- lme4::lmer( eng_1 ~ race_cat + gender +
+        ( 1 | class_id ) + ( 1 | team_id ) + ( 1 | week_start ),
+        data=du[du$survey_ordinal %in% 1,] )
+
+
+dum_measures <- c("eng_1","mw","fg","tc")
+dum <- melt(du[du$survey_ordinal %in% 1,], measure.vars = dum_measures )
+
+ggplot( dum[!is.na(dum$gender),], aes( race_cat, value, fill=gender ) ) +
+    geom_bar( stat="summary", fun.y="mean" , position=ug.dodge) +
+    ug.se_error_bar +
+    scale_fill_brewer(palette = "Set1") +
+    coord_cartesian(ylim=c(3,5)) +
+    xlab("") +
+    ylab("") +
+    ggtitle("") +
+    facet_grid( . ~ variable )
+
+stargazer(
+    mw_mod, fg_mod, tc_mod, eng_1_mod, 
+    star.cutoffs = c(.05, .01, .001),
+    notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+    notes.label  = "",
+    notes.append = FALSE,
+    single.row=TRUE,
+    header=FALSE
+)
+
+```
+
+## Perceived Learning Conditions and Concurrent Effort
+
+Building on the bivariate analysis above,
+we used a linear mixed-effect model to test whether students' 
+perceptions of learning conditions each independently 
+predicted concurrent effort even when controlling for prior GPA. 
+
+We found that students who, in a given week, perceived learning conditions to 
+be positive were also more likely to report putting forth more effort.
+The relationship between LCs and effort (eng_1) at any given point 
+was strong and more or less linear.
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE, results="asis" }
+
+lme4::lmer( eng_1 ~ tc + fg + mw + ba_gpa_1 + 
+        ( 1 | uid ) + ( 1 | class_id ) + ( 1 | team_id ) + ( 1 | week_start ),
+        data=du ) %>% 
+    stargazer(
+        model=.,
+        star.cutoffs = c(.05, .01, .001),
+        notes        = "",
+        notes.label = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+        notes.append = FALSE,
+        single.row=TRUE,
+        header=FALSE
+    )
+    
+
+du_measures <- c("fg","tc","mw")
+du_melt <- melt(du, measure.vars=du_measures)
+
+ggplot( du_melt, aes( value, eng_1, color=variable ) ) + 
+    geom_smooth( method="loess", se=F, span=3 ) + 
+    geom_jitter( alpha=.05 )  +
+    scale_color_brewer(palette = "Set1") +
+    xlab("Learning Condition Rating") +
+    ylab("Effort (eng_1)") +
+    ggtitle("Effort as a function of learning condition perceptions")
+
+```
+
+<!-- ## Predicting Time 2 Effort with Time 1 LCs + Prior Effort -->
+
+<!-- Learning conditions assessed at Time 1 predict engagement at Time 2 -->
+<!-- controlling for engagement at Time 1.  -->
+<!-- While each LC predicts change in engagement  -->
+<!-- independently, they cancel each other out when regressed together.  -->
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+# 
+# ############### CREATE ENGAGEMENT DATESET (ed) ###############################
+# # To look at weekly engagement measures (not the 60 day battery).
+# 
+# ed <- merge( du[du$survey_ordinal %in% 1,],
+#              du[du$survey_ordinal %in% 2,],
+#              by="uid",
+#              suffixes=c("_s1","_s2"))
+# 
+# # how long between survey_ordinal 1 and 2?
+# ed$s1_to_s2_days <- difftime(
+#                         ed$week_start_s2 , 
+#                         ed$week_start_s1, 
+#                         units="days" )
+# ```
+# 
+# ```{r, message=FALSE, warning=FALSE, eval = TRUE}
+# lmer( eng_1_s2 ~ eng_1_s1 + fg_s1 + ba_gpa_1_s1 + ( 1 | class_id_s1) , 
+#       data=ed) %>%
+#     summary  %>% 
+#     util.print_pre
+# 
+# lmer( eng_1_s2 ~ eng_1_s1 + tc_s1 + ba_gpa_1_s1 + ( 1 | class_id_s1) , 
+#       data=ed) %>%
+#     summary  %>% 
+#     util.print_pre
+# 
+# lmer( eng_1_s2 ~ eng_1_s1 + mw_s1 + ba_gpa_1_s1 + ( 1 | class_id_s1) , 
+#       data=ed) %>%
+#     summary  %>% 
+#     util.print_pre
+# 
+# lmer( eng_1_s2 ~ eng_1_s1 + fg_s1 + mw_s1 + tc_s1 + ( 1 | class_id_s1) , 
+#       data=ed) %>%
+#     summary  %>% 
+#     util.print_pre
+
+```
+
+## Changes in Learning Conditions Correspond to Changes in Engagement
+
+The previous analysis shows that positive perceptions of learning conditions 
+are associated with greater effort. However, it is possible that the 
+association between learning conditions and effort is driven entirely by 
+baseline differences between students. For example, perhaps motivated students 
+perceive their work as more meaningful and view their teachers as more supportive 
+regardless of teachers' behaviors. If teachers cannot actually influence 
+students' perceptions of learning conditions — or their effort — then 
+learning condition measures would have limited utility for improvement 
+purposes. Therefore, the next analysis tests whether changes in a given student's 
+perceptions of learning conditions from week-to-week correspond to changes 
+in the same student's effort in those same weeks. 
+
+We find that week-to-week changes in all LCs strongly predict 
+week-to-week changes in effort. 
+Additionally, feedback for growth interacts with 
+prior performance such that initial lower achievers (based on prior GPA) 
+are especially responsive to changes in feedback for growth.
+
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, results="asis", fig.width=3.9, fig.height=3}
+
+############### LC - engagement over time ############################
+eng_time_ids <- c("uid","team_name","class_id",
+                  "week_start_date","survey_ordinal")
+eng_time_vars <- c("eng_1","attn","fg","tc","mw")
+eng_time_all <- c(eng_time_ids, eng_time_vars)
+
+# prepare differnced time series (ts)
+ts_post <- du[,eng_time_all]
+ts_pre  <- du[,eng_time_all]
+ts_pre$next_survey_ordinal <- ts_pre$survey_ordinal + 1 
+ts_pre$survey_ordinal_pre <- ts_pre$survey_ordinal
+ts_pre$survey_ordinal <- NULL
+
+ts <- merge(ts_post, ts_pre, 
+            by.x=c("uid","survey_ordinal"),
+            by.y=c("uid","next_survey_ordinal"),
+            suffixes=c("","_pre"))
+
+ts <- merge(ts, 
+            du[du$survey_ordinal %in% 1, c("uid",control_vars_all)], 
+            by="uid")
+
+ts$eng_diff <- ts$eng_1 - ts$eng_1_pre
+ts$attn_diff <- ts$attn - ts$attn_pre
+ts$fg_diff <- ts$fg - ts$fg_pre
+ts$tc_diff <- ts$tc - ts$tc_pre
+ts$mw_diff <- ts$mw - ts$mw_pre
+ts$day_diff <- difftime(ts$week_start_date, ts$week_start_date_pre)
+
+
+mod1 <- lme4::lmer( eng_diff ~ fg_diff + tc_diff + mw_diff + survey_ordinal + 
+          ba_gpa_1 +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+      data=ts )
+
+mod2 <- lme4::lmer( eng_diff ~ fg_diff * ba_gpa_1 + 
+          tc_diff + ba_gpa_1 + 
+          mw_diff + ba_gpa_1 + 
+          survey_ordinal + 
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+      data=ts )
+
+stargazer(
+    mod1, mod2,
+    star.cutoffs = c(.05, .01, .001),
+    notes        = "",
+    notes.label = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+    notes.append = FALSE,
+    single.row=TRUE,
+    header=FALSE
+)
+
+
+ts_diff_vars <- c("fg_diff","tc_diff","mw_diff")
+ts_melt <- melt(ts, measure.vars=ts_diff_vars)
+
+ts$prior_gpa_levels <- NA
+ts$prior_gpa_levels[ts$ba_gpa_1 > 3] <- "A & B"
+ts$prior_gpa_levels[ts$ba_gpa_1 < 4] <- "C, D, F"
+
+ggplot( ts_melt, aes( value, eng_diff, color=variable ) ) + 
+    geom_smooth(method="lm", se=F) +
+    scale_color_brewer(palette = "Set1") +
+    xlab("Change in Learning Condition Rating") +
+    ylab("Change in Effort (eng_1)")
+
+ggplot(ts, aes(fg_diff, eng_diff, color=prior_gpa_levels ) ) +
+    geom_smooth(method="lm", se=F) +
+    scale_color_brewer(palette = "Set1") + 
+    xlab("Change in Feedback for Growth Rating") +
+    ylab("Change in Effort (eng_1)")
+
+
+
+```
+
+
+## Classmates' LCs Predict Individuals' Concurrent LCs and Effort
+
+The prior analysis showed that when students perceive learning conditions to 
+be positive in a given week, they are also more likely to report investing 
+more effort into their schoolwork in that week (relative to other weeks).
+However, it is conceivable that a third, unrelated variable accounts for 
+students' perceptions of both the learning conditions and their efforts.
+For example, if a student eats a good breakfast on a given day,
+perhaps they have more energy to do schoolwork and feel more positively about 
+the learning conditions that week. 
+
+While it was impossible to entirely rule out this explanation with existing 
+data, we were able to assess whether individuals' LC perceptions or effort 
+in a given week were consistent with their classmates' LC perceptions.
+We found that students' perceptions of learning conditions and personal effort 
+co-occurred with classmates' perceptions of learning conditions 
+in a given week. 
+This suggests that individuals' perceptions of learning conditions 
+(and the associated gains or losses in effort) are driven, 
+at least in part, by an experience that is 
+shared and commonly experienced by their classmates rather than an 
+unrelated occurrence, like eating a good breakfast.
+
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, results="asis"}
+
+# du with classroom level data (duc)
+duc <- du %>%
+        group_by(class_id, week_start) %>%
+        mutate(
+            mw_class = mean(mw, na.rm=TRUE), 
+            tc_class = mean(tc, na.rm=TRUE), 
+            fg_class = mean(fg, na.rm=TRUE), 
+            eng_1_class = mean(eng_1, na.rm=TRUE),
+            n_class = n()
+        ) %>% ungroup
+
+# calculate each score just for classmates (remove self)
+duc$mw_classmates <- ( duc$mw_class * duc$n_class - duc$mw ) / (duc$n_class-1)
+duc$tc_classmates <- ( duc$tc_class * duc$n_class - duc$tc ) / (duc$n_class-1)
+duc$fg_classmates <- ( duc$fg_class * duc$n_class - duc$fg ) / (duc$n_class-1)
+duc$eng_1_classmates <- 
+    ( duc$eng_1_class * duc$n_class - duc$eng_1 ) / (duc$n_class-1)
+
+
+eng_time_ids <- c("uid","team_name","class_id",
+                  "week_start_date","survey_ordinal")
+eng_time_vars <- c("eng_1","fg","tc","mw")
+eng_time_classmates <- paste0(eng_time_vars, "_classmates")
+eng_time_all <- c(eng_time_ids, eng_time_vars, eng_time_classmates)
+
+# prepare differenced class time series (cts)
+cts_post <- duc[,eng_time_all]
+cts_pre  <- duc[,eng_time_all]
+cts_pre$next_survey_ordinal <- cts_pre$survey_ordinal + 1 
+cts_pre$survey_ordinal_pre <- cts_pre$survey_ordinal
+cts_pre$survey_ordinal <- NULL
+
+cts <- merge(cts_post, cts_pre, 
+            by.x=c("uid","survey_ordinal"),
+            by.y=c("uid","next_survey_ordinal"),
+            suffixes=c("","_pre"))
+
+cts <- merge(cts, 
+            du[du$survey_ordinal %in% 1, c("uid",control_vars_all)], 
+            by="uid")
+
+cts$eng_diff <- cts$eng_1 - cts$eng_1_pre
+cts$fg_diff <- cts$fg - cts$fg_pre
+cts$tc_diff <- cts$tc - cts$tc_pre
+cts$mw_diff <- cts$mw - cts$mw_pre
+cts$day_diff <- difftime(cts$week_start_date, cts$week_start_date_pre)
+
+cts$eng_diff_classmates <- cts$eng_1_classmates - cts$eng_1_classmates_pre
+cts$fg_diff_classmates <- cts$fg_classmates - cts$fg_classmates_pre
+cts$tc_diff_classmates <- cts$tc_classmates - cts$tc_classmates_pre
+cts$mw_diff_classmates <- cts$mw_classmates - cts$mw_classmates_pre
+
+
+cts_measures <- c("fg_classmates",
+                   "tc_classmates",
+                   "mw_classmates",
+                   "eng_1_classmates"
+                   )
+cts_melt <- melt(cts, measure.vars=cts_measures)
+
+ggplot( cts_melt, aes( value, eng_1, color=variable ) ) + 
+    geom_smooth( method="loess", span=1, se=F) + 
+    geom_jitter( alpha=.1 ) +
+    scale_color_brewer(palette = "Set1") +
+    xlab("Classmates' Rating of each Learning Condition") +
+    ylab("Individual Student's Effort (eng_1)") +
+    ggtitle("Effort as a function of classmates' concurrent LCs or effort")
+
+
+# classmates' ratings of LCs strongly predict 
+# students own contemporaneous LC perceptions
+
+mod1 <- lme4::lmer( tc ~ tc_classmates +
+          tc_pre +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+            data=cts )
+
+mod2 <- lme4::lmer( fg ~ fg_classmates +
+          fg_pre +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+            data=cts )
+
+mod3 <- lme4::lmer( mw ~ mw_classmates +
+          mw_pre +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+            data=cts )
+
+stargazer(
+    mod1, mod2, mod3,
+    star.cutoffs = c(.05, .01, .001),
+    notes        = "",
+    notes.label = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+    notes.append = FALSE,
+    single.row=TRUE,
+    header=FALSE
+)
+
+mod5 <- lme4::lmer( eng_diff ~ fg_classmates +
+          eng_1_pre +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+            data=cts ) 
+
+mod6 <- lme4::lmer( eng_diff ~ tc_classmates +
+          eng_1_pre +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+            data=cts )
+
+mod7 <- lme4::lmer( eng_diff ~ mw_classmates +
+          eng_1_pre +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+           data=cts ) 
+
+mod8 <- lme4::lmer( eng_diff ~ fg_classmates +
+          tc_classmates +
+          mw_classmates +
+          eng_1_pre +
+          ( 1 | team_name ) + ( 1 | uid )  + 
+          ( 1 | class_id ) + ( 1 | week_start_date)  , 
+            data=cts ) 
+
+stargazer(
+    mod5, mod6, mod7,
+    star.cutoffs = c(.05, .01, .001),
+    notes        = "",
+    notes.label = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+    notes.append = FALSE,
+    single.row=TRUE,
+    header=FALSE
+)
+
+
+
+```
+
+
+
+\newpage
+
+
+# Changes in LCs and Effort Over Time
+
+A final set of analyses started to explore whether educators' participation 
+in the Engagement Project affected LCs and 
+promoted student engagement. This analysis was 
+complicated by several factors. 
+
+* Reductions in student motivation are often observed over the course 
+of a school year and over the course of adolescence more generally. 
+So it seems plausible that — absent educators' efforts to the contrary — 
+students would experience declines in effort and LCs. 
+Without knowing what level of decline (if any) should be expected, 
+it is impossible to know what constitutes "success" from the perspective of 
+improving students' experiences and motivation.
+* It is plausible that measures of learning conditions and effort are 
+prone to reference effects. 
+For example, perhaps students' standards become higher as their teachers 
+make more of an effort to be supportive, to provide feedback, 
+and to help students understand the relevance of schoolwork.
+* No behavioral data are available to test for reference bias or shifting 
+standards.
+
+With the caveats above in mind, it is worth noting that there were no 
+overall changes in LCs. In contrast, there appeared to be a very
+modest improvement in students' self-reported effort. 
+
+On balance, these results suggest that one or both of the following are true:
+
+* The Engagement Project provided insufficient guidance for teachers to 
+meaningfully improve their students' experiences or engagement.
+* The measures utilized thus far for the Engagement Project 
+are insufficiently sensitive to pick up changes in students' effort or 
+experiences in response to changes in teacher behavior. 
+
+
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, results="asis"}
+
+# # # calculate change in LCs from first to last survey
+first_and_last_survey <- du %>%
+    group_by(uid) %>%
+    summarise(
+        first_ordinal = min(survey_ordinal) ,
+        last_ordinal = max(survey_ordinal)
+    )
+
+first_and_last_survey <-
+    first_and_last_survey[ ! first_and_last_survey$last_ordinal %in% 1,]
+
+du_1 <- merge(du, first_and_last_survey,
+              by.x=c("uid","survey_ordinal"),
+              by.y=c("uid","first_ordinal")
+                )
+
+```
+
+
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE, results="asis", fig.height=3.5}
+
+## exploring changes over time without dropping all intermediate obs
+
+## first to all (fa)
+fa <- merge( du, du_1, by="uid", suffixes=c("","_pre"))
+
+fa$fg_diff <- fa$fg - fa$fg_pre
+fa$tc_diff <- fa$tc - fa$tc_pre
+fa$mw_diff <- fa$mw - fa$mw_pre
+fa$eng_diff <- fa$eng_1 - fa$eng_1_pre
+fa$attn_diff <- fa$attn - fa$attn_pre
+fa$eng_1_pre_stan <- util.z_score(fa$eng_1_pre)
+fa$eng_1_pre_char <- as.character(fa$eng_1_pre)
+fa$eng_1_pre_char[fa$eng_1_pre %in% c(1,2)] <- "1 & 2"
+fa$engaged4 <- ifelse(fa$eng_1 > 3,1,0)
+fa$engaged5 <- ifelse(fa$eng_1 > 4,1,0)
+
+
+fa$day_diff <- difftime(fa$week_start_date,
+                        fa$week_start_date_pre,
+                        units="days") %>% as.numeric
+fa$day_diff_log <- log(.01 + fa$day_diff)
+fa$post <- ifelse(fa$day_diff > 0,1,0)
+fa$weeks_since_baseline <- floor(fa$day_diff / 12 )
+fa$race_gen <- paste(fa$race_cat, fa$gender)
+
+fa <- fa %>%
+    group_by(uid) %>%
+    mutate( max_week = max(weeks_since_baseline) ) %>%
+    ungroup()
+fa$max_week_char <- as.character(fa$max_week)
+
+fam_measures <- c("fg",
+                  "tc",
+                  "mw",
+                  "eng_1")
+fam <- melt(fa, measure.vars=fam_measures)
+fam_ag <- fam %>% 
+            group_by(uid, variable, post, race_gen, race_cat, gender, response_quality) %>%
+            summarise( value=mean(value, na.rm=T) ) %>%
+            ungroup
+
+ggplot( fam_ag, 
+        aes(post, value, group=race_gen, color=race_cat, linetype=gender ) ) + 
+    geom_line( stat="summary", fun.y="mean") +
+    xlab("") + ylab("") +
+    scale_x_continuous(breaks=c(0,1), labels=c("Baseline","Mean\nPost")) +
+    ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+                                geom="errorbar", width=.1, 
+                                fun.args=list(conf.int=.68)) +
+    facet_grid(. ~ variable) +
+    scale_color_brewer(palette = "Set1") 
+
+
+mod1 <- lme4::lmer(fg ~ post +
+         (1|uid) +
+         (1|class_id) +
+         (1|week_start_date)+
+         (1|team_name),
+     data=fa)
+
+mod2 <- lme4::lmer(tc ~  post +
+         (1|uid) +
+         (1|class_id) +
+         (1|week_start_date)+
+         (1|team_name),
+     data=fa) 
+
+mod3 <- lme4::lmer(mw ~  post +
+         (1|uid) +
+         (1|class_id) +
+         (1|week_start_date)+
+         (1|team_name),
+     data=fa) 
+
+mod4 <- lme4::lmer(eng_1 ~  post +
+         (1|uid) +
+         (1|class_id) +
+         (1|week_start_date)+
+         (1|team_name),
+     data=fa) 
+
+stargazer(
+    mod1, mod2, mod3, mod4,
+    star.cutoffs = c(.05, .01, .001),
+    notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+    notes.label = "",
+    notes.append = FALSE,
+    single.row=TRUE,
+    header=FALSE
+)
+
+    
+```
+
+
+# Quick test of model for 2018-2019 data
+
+effort ~ *comb_lc_score* + gender + race + prior_gpa + ( 1 | student ) + ( 1 | class ) + ( 1 | team ) + ( 1 | month )
+
+```{r}
+
+# setup
+du$month_start <- substr(du$week_start, 1, 7)
+du$comb_lc_score <- rowMeans(du[, c(fg_qs, tc_qs, mw_qs)], na.rm = TRUE) 
+
+# model
+summary(lmer(eng_1 ~ comb_lc_score + gender + race_1 + ba_gpa_1 + 
+               (1|comb_id) + (1|class_id) + (1|team_id) + (1|month_start),
+        data = du))
+
+# does month matter? not much.
+ggplot(du, aes(month_start, eng_1)) + 
+  geom_bar(stat="summary", fun.y="mean") +
+  ug.se_error_bar
+
+# does team matter? yes.
+ggplot(du, aes(team_id, eng_1)) + 
+  geom_bar(stat="summary", fun.y="mean") +
+  ug.se_error_bar
+
+# does class matter? yes.
+ggplot(du, aes(class_id, eng_1)) + 
+  geom_bar(stat="summary", fun.y="mean") +
+  ug.se_error_bar
+
+```
+
+
+
+
+
+
+

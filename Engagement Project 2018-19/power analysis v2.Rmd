@@ -1,0 +1,175 @@
+---
+title: "Power Analysis for EP 2018-19"
+author: "Sarah Gripshover"
+date: "August 2018"
+output: 
+    html_document:
+        fig_caption: no
+        toc: yes
+        theme: spacelab
+        css: ~/Sites/gymnast/Rmd/rmd_styles.css
+---
+
+# Introduction
+
+The purpose of this power analysis is to **determine the sample size needed to detect a partial correlation of .15** between learning conditions as measured in the Engagement Project and student administrative outcomes, such as grades, absences, and disciplinary citations, controlling for covariates such as self-reported previous grades.
+
+This analysis will inform PERTS' strategy for data collection for the Engagement Project 2018-19 pilot. We will either determine an attainable sample size to yield sufficient power for detecting the effect specified above, or we will determine that such a sample size is unattainable in the current pilot framework. This would mean we would have to look to other options for analytic approaches.
+
+# Power Analysis
+
+## Assuming a simple linear model
+
+First, we will perform a power analysis that does not assume any clustering of data. The advantage to this approach is that it is simple and can be done with existing R packages, rather than with an idiosyncratic simulation. A disadvantage is that it ignores the fact that the data we are collecting are known to be nested. While this analysis will not be able to tell us how our nested data structures affect our statistical power, it is a good first step to figure out whether our sample size is in the right ballpark to detect the effect that we care about. Follow-up analyses may then explore the impact of nested data on power.
+```{r, echo = FALSE, results = 'hide', warning=FALSE, message=FALSE}
+options(warn=-1)
+library("MASS")
+library("dplyr")
+library("xtable")
+source("~/Sites/gymnast/R/util.R")
+library("tidyr")
+library("pwr")
+library("boot")
+library("psych")
+library("lmSupport")
+library("ppcor")
+library("data.table")
+library("ggplot2")
+library("zoo")
+library("reshape")
+
+alpha <- .05
+beta <- .2
+power <- 1-beta
+r <- .15 # this is the expected partial correlation
+sample_size <- 
+  pwr.r.test(r = r, sig.level = alpha, power = power, alternative = "two.sided")$n %>% 
+  round(.,)
+```
+### Direct calculation using zero-order correlation with no covariates
+The easiest way to get a reasonable approximation of the required sample size is to treat the partial correlation as a zero-order correlation, then we can apply directly the existing functions for computing power. For zero order correlation r =  `r r`, alpha = `r alpha` (two-tailed), to achieve power = `r power` we will sample size **n = `r sample_size`**. The 
+
+
+### Using partial correlation as an effect size in a simulated data with covariates
+I cannot figure out analytically if estimates based on partial correlation and on zero-order correlation shoud differ. Instead, I ran a quick comparison between three methods for estimating power based on sample size:  
+  
+  
+* Analytic method (the function `pwr.r.test`) using power estimate based on zero-order correlations. This is the same method used above.  
+  
+* Simulation method using partial correlation, where the covariates explain 0% of the variance. In theory, this simulation should provide the same estimates as the analytic method above.  
+  
+* Simulation method using partial correlation, where the covariates explain about 50% of the variance in the DV. My intuition was that this shold provide the same estimates as the two methods above, but as we will see, it leads to slightly higher power (smaller sample size needed).  
+  
+  
+The graph bellow presents the relationship between sample size (x-axis) and power (y-axis). All estimates are based on partial correlation r = `r r`. The general pattern is that the "0% covariance" and the "analytical" methods largely converge, while the "50% covariance" has about 15% lower estimate for required sample size in the power range around 80%. The first two methods suggest that we need about 350 people to achieve power of 80%, while the the third method suggests 300. Since covariance will be probably lower than 50%, a reasonable estimate will be 300 to 350, and if we want to be on the conservative side (no covariance), we can stick to n = 350.
+
+```{r, echo = FALSE, results = 'hide', fig.width=6, fig.height=6, warning=FALSE, message=FALSE}
+# run a quick simulation to check if we can approximate the analytic method via simulations
+set.seed(1)
+
+n <- 10000 # this is our total population
+
+# build a simulation model
+x_main <- rnorm(n)
+x_cov <- rnorm(n)
+x_error <- rnorm(n)
+
+# I will try to simulate a model, where the zero order correlation between 
+# x_main and y is r/2, and the partial correlation is r
+y <- r/2*x_main + ((1-r/2))/2*x_cov + ((1-r/2))/2*x_error
+
+# for y2, the zero-order and the partial correlation are both r since there are no significant covariates
+# this will be used as a comparison for the y model (which has 50% explained by the covariate)
+y2 <- r*x_main + (1-r)*x_error 
+
+
+df <- data.frame(
+  x_main = x_main,
+  x_cov=x_cov,
+  x_error = x_error,
+  y = y,
+  y2 = y2
+)
+cor(df) %>% round(.,2)
+
+mod1 <- lm(y~x_main+x_cov, data = df)
+mod2 <- lm(y2~x_main+x_cov, data = df)
+summary(mod1) # check 
+summary(mod2)
+pcor.test(df$y,df$x_main,df$x_cov)
+pcor.test(df$y,df$x_cov,df$x_main)
+pcor.test(df$y2,df$x_main,df$x_cov) # for y and y2 we expect the partial correlations to be the same
+#modelEffectSizes(mod1) %>% summary
+
+b_and_p <- function(formula, data, sample_size) {
+  sample <- sample(1:nrow(data), sample_size)
+  d <- data[sample,] # allows boot to select sample 
+  fit <- lm(formula, data=d)
+  out_list <- list(
+    b_val = summary(fit)$coefficients[2,1],
+    p_val = summary(fit)$coefficients[2,4]
+    )
+  return(out_list)
+} 
+
+f_zero <- as.formula(y~x_main + x_cov)
+f_partial <- as.formula(y2~x_main + x_cov) # this is using the zero-order correlation
+
+simulation_df <- data.frame()
+sample_size_seq <- seq(from = 250, to = 750, by = 50)
+prop_sign <- function(vect) {
+  sum(vect < .025)/length(vect) # two.tailed
+}
+
+
+for (sample_size in sample_size_seq) {
+  print(sample_size)
+  
+  # there will be three types of estimates, two based on covariance explained and one based on analytical solution
+  sim1 <- lapply(1:1000, function(x) b_and_p(formula = f_partial, data = df, sample_size = sample_size)) %>%
+  rbindlist()
+  sim1$p_val[sim1$b_val < 0] <- 1
+  current_df <- data.frame(
+    sample_size = sample_size,
+    prop_sign = prop_sign(sim1$p_va), 
+    type = "50% covariance"
+  )
+  
+  simulation_df <- bind_rows(simulation_df, current_df)
+  sim1 <- lapply(1:1000, function(x) b_and_p(formula = f_zero, data = df, sample_size = sample_size)) %>%
+  rbindlist()
+  sim1$p_val[sim1$b_val < 0] <- 1
+  current_df <- data.frame(
+    sample_size = sample_size,
+    prop_sign = prop_sign(sim1$p_va), 
+    type = "0% covariance"
+  )
+  simulation_df <- bind_rows(simulation_df, current_df)
+  
+  current_df <- data.frame(
+    sample_size = sample_size,
+    prop_sign = pwr.r.test(r = r, sig.level = alpha, n = sample_size, alternative = "two.sided")$power, 
+    type = "analytical"
+  )
+  simulation_df <- bind_rows(simulation_df, current_df)
+}
+
+
+
+
+
+gg1 <- simulation_df %>% ggplot(aes(x = sample_size, y = prop_sign, color = type)) +
+  geom_line(size=1) +
+  xlab("Sample Size") +
+  ylab("Power")
+
+print(gg1)
+```
+
+## Accounting for nesting
+Computing power for a mixed-effect model is much harder. Here are a couple of links: [discussion](https://www.theanalysisfactor.com/sample-size-multilevel-models/) or 
+[download](https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=1&ved=2ahUKEwjXjMbB2erdAhUO-J8KHZDlDmQQFjAAegQICRAC&url=http%3A%2F%2Flegacy.iza.org%2Fen%2Fpapers%2F1243_29062006.pdf&usg=AOvVaw0HCeOBOvEciM0G-3ojpkxr) a paper describing how to estimate power in a three-levels nested models.
+
+My current state of mind is that we do not need dedicated power analysis which includes random effects, unless we are interested in the significance of the random effects themselves. Including random effects might increase or decrease the significance of the fixed effect, and we do not know apriori which will be the case. For the CG18 reports, for example, including random intercepts did not change the estimates for the fixed effects. Given the time cost, and the uncertainty associated with including random effects in the power analysis, I recommend we postpone it for now.
+
+

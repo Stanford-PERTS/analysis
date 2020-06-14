@@ -1,0 +1,764 @@
+---
+title: "2019 CL EP analysis.Rmd"
+author: "Daniel Greene"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  pdf_document:
+    toc: yes
+    fig_width: 9
+    fig_height: 7
+    fig_caption: yes
+  html_document:
+    fig_caption: yes
+    fig_height: 7
+    fig_width: 9
+    toc_depth: 2  
+---
+
+# Summary
+
+This document analyzes relationships between student learning conditions and math course GPA during the 2019 school year.
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+```
+
+```{r, include=FALSE}
+
+############### USER-DEFINED INPUTS #####################################
+
+general_data_folder_crypt_path <- "SY 2018-19 Q4"
+input_data_crypt_path <- "SY 2018-19 Q4/2018-2019 CL cleaned data for PERTS analysis.csv"
+
+```
+
+```{r, results='hide', echo = FALSE}
+
+############### LOAD LIBRARIES AND PATHS #####################################
+
+options(stringsAsFactors = FALSE)
+options(xtable.comment = FALSE)
+github_base_path <- "https://raw.githubusercontent.com/PERTS/gymnast/master/"
+
+tryCatch({
+    source("~/Sites/gymnast/R/util.R")
+    gymnast_install()
+    library(tidyverse)
+    source("~/Sites/gymnast/R/util_data_summaries.R")
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R")
+    source("~/Sites/gymnast/R/util_graphing.R")
+    source("~/Sites/gymnast/R/util_scale_computation.R")
+    source("~/Sites/gymnast/R/util_dfc.R")
+}, error = function(e){
+    source(github_base_path %+% "R/util.R")
+    gymnast_install()
+    source(github_base_path %+% "R/util_data_summaries.R")
+    source(github_base_path %+% "R/util_qualtrics_cleaning.R")
+    source(github_base_path %+% "R/util_graphing.R")
+    source(github_base_path %+% "R/util_scale_computation.R")
+    source(github_base_path %+% "R/util_dfc.R")
+})
+
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(scales)
+library(corrplot)
+library(egg)
+
+# Set "today" - by default, use the real today
+TODAY <- lubridate::ymd(Sys.Date())
+
+REPO <- "~/Sites/analysis/Engagement Project 2018-19/2018-2019 CL EP analysis /"
+
+```
+
+```{r}
+
+############### LOAD DATA #####################################
+
+d <- util.find_crypt_paths(list(a = input_data_crypt_path))$a %>%
+  read.csv()
+
+d$q4_math_course_id <- as.factor(d$q4_math_course_id)
+
+# make a few more handy vars
+d$lcs_good <- d$comb_lc_score >= 6
+d$marginalized <- (d$black | d$hispanic | d$amindian | d$pacisl | d$multirace) %>%
+  util.recode(c(FALSE, TRUE),
+              c("White/Asian", "Black/Hispanic/AmIndian/PacIsl/Multi"))
+
+# Sanity check data
+# d %>%
+#   select(one_of(c("tc1_2", "tc2_2", "tc4_2", "fg2_2", "fg3_3", "mw1_2", "mw2_2", "mw3_2"))) %>%
+#   View
+
+```
+
+# Confirmatory analyses
+
+## H1: Combined LC score predicts Q4 math grade.
+
+```{r}
+
+lc_grade_cor_test <- cor.test(d$q4_math_grade, d$comb_lc_score)
+# lc_grade_cor_test
+
+```
+
+Learning conditions positively correlated with Q4 math grades (r = `r round(lc_grade_cor_test$estimate, 2)`, p < .001).
+
+# Exploratory analyses
+
+## Do LCs still predict grades when controlling for demographics? Yes.
+
+```{r, warning=FALSE, results='asis'}
+
+lm(q4_math_grade ~ comb_lc_score + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+             frpl + ell + iep + ese,
+           data = d) %>%
+  stargazer(star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "LCs still predict Q4 math grades when controlling for demographics")
+
+```
+
+\newpage
+
+## Do individual LCs each predict grades in separate regressions? Yes.
+
+```{r, results='asis'}
+
+# tc - yes (bigger effect)
+tc_mod <- lm(q4_math_grade ~ tc + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+             frpl + ell + iep + ese,
+           data = d)
+# fg - yes
+fg_mod <- lm(q4_math_grade ~ fg + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+             frpl + ell + iep + ese,
+           data = d)
+# mw - yes
+mw_mod <- lm(q4_math_grade ~ mw + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+             frpl + ell + iep + ese,
+           data = d)
+
+stargazer(tc_mod, fg_mod, mw_mod,
+        star.cutoffs = c(.05, .01, .001),
+        notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+        notes.label  = "",
+        notes.append = FALSE,
+        single.row=TRUE,
+        header=FALSE,
+        title = "Individual LCs each predict Q4 math grade in separate regressions")
+
+# graphing
+d_m <- melt(d,
+            id.vars = c("student_id", "q4_math_grade"),
+            measure.vars = c("fg", "mw", "tc"))
+ggplot(d_m,
+       aes(value, q4_math_grade, color = variable)) +
+  geom_smooth() +
+  xlab("Learning condition value (1-7)") +
+  ylab("Q4 Math GPA (0-4)") +
+  ggtitle("Relationships between individual learning conditions and Q4 math grades")
+
+# Should I include these covariates all together if they are intercorrelated highly?
+# cor( d[, c("tc", "fg", "mw")], use="pairwise" ) %>%
+#     corrplot( type="lower", method = "number", tl.col = "black")
+# No - they are all intercorrelated at least .57.
+
+```
+
+\newpage
+
+## Do LCs still predict grades when also controlling for non-math GPA? Then comb_lc_score is only marginally significant.
+
+But presumably we are controlling away a lot of unique student-teacher interaction here.
+
+```{r, results='asis'}
+
+lm(q4_math_grade ~ comb_lc_score + q4_non_math_gpa + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+             frpl + ell + iep + ese,
+           data = d) %>%
+  stargazer(star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "LCs only marginally predict Q4 math grades when controlling for non-math GPA")
+
+```
+
+\newpage
+
+## What if we include random effects of course and school?
+
+LMER drops "multirace" and "ese" fixed effect categories as "rank deficient", then finds no relationship.
+But presumably we are controlling away classroom culture here, so that makes sense.
+
+```{r, results='asis'}
+
+lc_lmer_mod <- lmer(q4_math_grade ~ comb_lc_score + q4_non_math_gpa + gender + 
+                      white + black + asian + hispanic + amindian + pacisl + multirace + 
+                      frpl + ell + iep + ese + (1 | q4_math_course_id) + (1 | school),
+           data = d)
+class(lc_lmer_mod) <- "lmerMod"
+stargazer(lc_lmer_mod,
+          star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "LCs do not predict Q4 math grades when controlling for course and school")
+
+```
+
+\newpage
+
+## What if we include previous math GPA? (Don't have those vars on-hand yet.)
+
+## What is coefficient alpha for LCs in this dataset? (About .9.)
+
+```{r}
+
+lc_qs <- c("tc1_2", "tc2_2", "tc4_2",
+           "fg2_2", "fg3_2",
+           "mw1_2", "mw2_2", "mw3_2")
+my_alpha <- psych::alpha(d[, lc_qs])$total$std.alpha %>% round(2)
+
+```
+
+Confirmed: Cronbach's alpha = `r my_alpha`.
+
+## Do LCs predict attendance and disciplinary outcomes? (No.)
+
+```{r, results='asis'}
+
+# Q4 absences: No
+# ggplot(d, aes(q4_unex_absences)) + geom_histogram() Note - not normally distributed
+lm(q4_unex_absences ~ comb_lc_score + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+             frpl + ell + iep + ese,
+           data = d) %>%
+  stargazer(star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "LCs do not predict unexcused-absence rate (using a standard linear model)")
+
+# Trying Poisson regression: Nope.
+# summary(glm(q4_unex_absences ~ comb_lc_score + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+#              frpl + ell + iep + ese,
+#             family = "poisson",
+#            data = d))
+
+# for binary outcome?
+# d$q4_unex_absences_any <- d$q4_unex_absences > 0
+# summary(glm(q4_unex_absences_any ~ comb_lc_score + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+#              frpl + ell + iep + ese,
+#             family = binomial,
+#            data = d))
+
+# What about Q4 attendance rate, or having a 96%+ attendance rate for Q4? Nope.
+# summary(lm(prop_q4_present ~ comb_lc_score + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+#              frpl + ell + iep + ese,
+#            data = d))
+# summary(glm(q4_present_high ~ comb_lc_score + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+#              frpl + ell + iep + ese,
+#             family = binomial,
+#            data = d))
+
+
+
+# Q4 suspensions:
+# ggplot(d, aes(q4_suspensions)) + geom_histogram() Heavily lopsided, so make binary
+d$q4_suspensions_any <- d$q4_suspensions > 0
+# summary(glm(q4_suspensions_any ~ comb_lc_score + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+#              frpl + ell + iep + ese,
+#             family = binomial,
+#            data = d)) # Error
+# summary(glm(q4_suspensions_any ~ comb_lc_score,
+#             family = binomial,
+#            data = d)) # Nothing
+
+glm(q4_suspensions_any ~ comb_lc_score + gender + marginalized +
+             frpl + ell + iep,
+            family = binomial,
+           data = d) %>%
+  stargazer(star.cutoffs = c(.05, .01, .001),
+          notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+          notes.label  = "",
+          notes.append = FALSE,
+          single.row=TRUE,
+          header=FALSE,
+          title = "LCs do not predict having >0 Q4 suspensions")
+
+
+```
+
+\newpage
+
+## Understanding group differences in specific LCs
+
+On average, marginalized students report higher LCs than non-marginalized students. But in this sample, it only shows up in Meaningful Work and (to a lesser extent) Feedback for Growth, not in Teacher Caring. Gender differences are minimal.
+
+```{r}
+
+# All LCs
+# ggplot(d,
+#        aes(marginalized, comb_lc_score, fill = gender)) +
+#   geom_bar(stat = "summary", fun.y = "mean", position = position_dodge()) +
+#   ug.se_error_bar
+
+# Individual LCs
+d_m <- melt(d,
+            id.vars = c("student_id", "marginalized", "gender"),
+            measure.vars = c("fg", "mw", "tc"))
+ggplot(d_m,
+       aes(marginalized, value, fill = gender)) +
+  geom_bar(stat = "summary", fun.y = "mean", position = position_dodge()) +
+  ug.se_error_bar +
+  facet_grid(. ~ variable) +
+  ggtitle("Group differences in learning-condition scores")
+
+```
+
+
+\newpage
+
+## Are LC relationships with outcomes moderated by race, gender, or reduced-price lunch status? (No - see Rmd for details.)
+
+```{r}
+# 
+# # Nothing with gender
+# summary(lm(q4_math_grade ~ comb_lc_score*gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+#              frpl + ell + iep + ese,
+#            data = d))
+# 
+# # Nothing with FRPL
+# summary(lm(q4_math_grade ~ comb_lc_score*frpl + gender + white + black + asian + hispanic + amindian + pacisl + multirace +
+#             ell + iep + ese,
+#            data = d))
+# 
+# # Nothing with marginalized bucket-category
+# summary(lm(q4_math_grade ~ comb_lc_score*marginalized + gender + frpl +
+#             ell + iep + ese,
+#            data = d))
+# # Hispanic stands out in simple analysis, so try moderation on that? Nothing.
+# summary(lm(q4_math_grade ~ comb_lc_score*hispanic + white + black + asian + gender + amindian + pacisl + multirace +
+#              frpl + ell + iep + ese,
+#            data = d))
+# 
+# # Graph suggests that there IS an interaction for a binary "lcs_good" variable...
+# ggplot(filter(d, !is.na(lcs_good)),
+#        aes(lcs_good, q4_math_grade)) +
+#   geom_bar(stat = "summary", fun.y = "mean") +
+#   ug.se_error_bar +
+#   facet_grid(gender ~ marginalized) +
+#   ggtitle("Higher LCs appear to predict higher math grades for marginalized students of all genders")
+# # ...but this is not supported by linear models?!
+# summary(lm(q4_math_grade ~ lcs_good*marginalized,
+#            data = d))
+# summary(lm(q4_math_grade ~ lcs_good*marginalized + gender + frpl +
+#             ell + iep + ese,
+#            data = d))
+
+
+############## Exploratory analyses of this relationship by race
+# ggplot(d,
+#        aes(comb_lc_score, q4_math_grade)) +
+#   geom_smooth()
+# 
+# d$earned_abc <- as.numeric(d$q4_math_grade >= 2)
+# d$lc_good <- as.numeric(d$comb_lc_score >= 6)
+# 
+# ggplot(d,
+#        aes(comb_lc_score, earned_abc)) +
+#   geom_smooth()
+# 
+# ggplot(d,
+#        aes(lc_good, q4_math_grade)) +
+#   geom_bar(stat = "summary", fun.y = "mean") +
+#   ug.se_error_bar +
+#   facet_grid(. ~ marginalized)
+# 
+# table(d$marginalized)
+# 
+# table(d$marginalized, d$lc_good)
+# table(d$hispanic, d$lc_good)
+# 
+# ggplot(d,
+#        aes(lc_good, q4_math_grade)) +
+#   geom_bar(stat = "summary", fun.y = "mean") +
+#   ug.se_error_bar +
+#   facet_grid(. ~ hispanic)
+# 
+# ggplot(d,
+#        aes(lc_good, q4_math_grade)) +
+#   geom_bar(stat = "summary", fun.y = "mean") +
+#   ug.se_error_bar +
+#   facet_grid(. ~ white)
+# 
+# ds.summarize_by_column(d[, c("white", "asian", "black", "hispanic", "amindian", "pacisl", "multirace")])
+# 
+# ggplot(d,
+#        aes(lc_good, earned_abc)) +
+#   geom_bar(stat = "summary", fun.y = "mean") +
+#   ug.se_error_bar
+
+```
+
+
+
+
+# For external report 
+
+```{r}
+alpha <- psych::alpha(d[c("tc1_2", "tc2_2", "tc4_2", "fg2_2", "fg3_2", "mw1_2", "mw2_2", "mw3_2")])
+alpha$total %>%
+    xtable()
+d$lc_agree_disagree <- ifelse(d$comb_lc_score >= 5, "Positive conditions", "Negative conditions") %>%
+    factor(levels = c("Negative conditions", "Positive conditions"))
+d$lc_agree_disagree_numeric <- ifelse(d$lc_agree_disagree %in% "Positive conditions", 1, 0)
+d$A_or_B <- ifelse(d$q4_math_grade >= 3, 1, 0)
+d$C_or_better <- ifelse(d$q4_math_grade >= 2, 1, 0)
+d$D_or_better <- ifelse(d$q4_math_grade >= 1, 1, 0)
+
+cor.test(d$A_or_B, d$lc_agree_disagree_numeric)
+
+
+
+d %>%
+  dplyr::filter(complete.cases(d)) %>%
+  group_by(floor(comb_lc_score)) %>%
+  summarise(
+    n = n(),
+    grade_points = mean(q4_math_grade, na.rm = TRUE),
+    A_or_B = mean(q4_math_grade >= 3),
+    C_or_better = mean(q4_math_grade >= 2)
+  )
+
+
+
+d$lc_bin <- floor(d$comb_lc_score)# %>%
+  #factor(levels = 1:7, labels = c("Strongly\nDisagree", "Disagree", "Slightly\nDisagree", "Neither Agr\nnor Disagr", "Slightly\nAgree", "Agree", "Strongly\nAgree"))
+
+d$lc_more_than_slightly_agree <- ifelse(d$comb_lc_score >= 6, "agree or strongly agree", "slightly or not agree") %>%
+    factor(
+      levels = c("slightly or not agree", "agree or strongly agree"),
+      labels = c("slightly or not agree", "agree or strongly agree ('good range')")
+    )
+
+# check the coding
+d %>%
+  dplyr::filter(!is.na(d$lc_bin)) %>%
+  group_by(
+    lc_bin,
+    lc_agree_disagree,
+    lc_more_than_slightly_agree
+  ) %>%
+  summarise(
+    n = n(),
+    A_or_B = mean(A_or_B)
+  )
+
+
+d$race_cat <- ifelse(d$black, "black", ifelse(d$hispanic, "hispanic", ifelse(d$amindian, "amindian", ifelse(d$pacisl, "pacisl", ifelse(d$asian, "asian", ifelse(d$multirace, "multirace", ifelse(d$white, "white", NA))))))) 
+
+d$race_grouped <- d$race_cat
+
+race_levels <- c("black", "hispanic", "amindian", "pacisl", "asian", "multirace", "white")
+race_labels <- c("Black or African-\nAmerican", "Latinx", "Native\nAmerican", "Pacific\nIslander", "Asian or\nAsian-American", "Multi-\nRace", "White or European-\nAmerican")
+
+groups_reduced <- c("amindian", "multirace", "pacisl")
+race_levels_reduced <- race_levels[!race_levels %in% groups_reduced]
+race_labels_reduced <- race_labels[which(race_levels %in% race_levels_reduced)]
+
+race_levels_intercept <- c("white", setdiff(race_levels, "white"))
+race_labels_intercept <- c("White or European-\nAmerican", setdiff(race_labels, "White or European-\nAmerican"))
+
+d$race_f <- factor(d$race_cat, levels = race_levels, labels = race_labels)
+# this will set unused values to NA on purpose
+d$race_reduced_f <- factor(d$race_cat, levels = race_levels_reduced, labels = race_labels_reduced) 
+d$race_intercept_f <- factor(d$race_cat, levels = race_levels_intercept, labels = race_labels_intercept)
+
+d$gender_f <- factor(d$gender, levels = c("Female", "Male or nonbinary"), labels = c("Female", "Male"))
+
+COLORS <-  c("#155994", "#00B2EE")
+SCALE_FILL <- scale_fill_manual(
+        breaks = c("Negative conditions", "Positive conditions"),
+        values = COLORS,
+        name = "Learning conditions"
+    ) 
+SCALE_FILL_NOLAB <- scale_fill_manual(
+        breaks = c("Negative conditions", "Positive conditions"),
+        values = COLORS,
+        name = ""
+    ) 
+THEME <- theme(
+    legend.position = "bottom",
+    axis.title.x = element_text(size = 14),
+    panel.background = element_blank()
+    ) 
+
+lm(A_or_B ~ lc_agree_disagree * marginalized + q4_non_math_gpa, data = d, family = "binomial") %>%
+    summary 
+
+d$q4_non_math_gpa_bins <- floor(d$q4_non_math_gpa) %>%
+  factor(., levels = c(0,1,2,3,4), labels = c("F's", "D's", "C's", "B's", "A's"))
+
+d$q4_non_math_gpa_two_bins <- ifelse(d$q4_non_math_gpa <= 2, "below 2.0", ifelse(d$q4_non_math_gpa > 2, "above 2.0", NA)) %>%
+  factor(., levels = c("below 2.0", "above 2.0"), labels = c("Other class GPA\nbelow 2.0", "Other class GPA\nabove 2.0"))
+
+table(d$q4_non_math_gpa_two_bins) %>%
+    xtable()
+
+# check this coding
+d %>%
+  group_by(q4_non_math_gpa, q4_non_math_gpa_bins, q4_non_math_gpa_two_bins) %>%
+  summarise(n = n())
+
+dcc <- d[complete.cases(d),]
+#cor.test(dcc$comb_lc_score, dcc$q4_math_grade) r(1124) = .10, p < .001
+
+
+# overall grade points
+ggplot(d, aes(lc_bin, q4_math_grade)) +
+    geom_line(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar +
+    coord_cartesian(ylim = c(1.5, 3.0)) +
+    ylab("Numeric value of grade in math class") +
+    xlab("Scale response value of average learning conditions score") +
+    THEME
+
+# overall likelihood of A/B as a function of all scale points
+whole_scale_plot <- ggplot(d[!is.na(d$lc_bin),], aes(x = lc_bin, A_or_B)) +
+    geom_line(stat = "summary", fun.y = "mean") +
+    ug.se_error_bar +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    ylab("Likelihood of earning an A or a B in class") +
+    xlab("Scale response value of average\nlearning conditions score") +
+    THEME +
+    theme(axis.text.y = element_text(size = 14))
+
+ggsave(REPO %+% "graphs/all_scale_points.png", whole_scale_plot, width = 4, height = 3, dpi = "print")
+
+
+# small race groups removed
+d_reduced <- dplyr::filter(
+      d,
+      !is.na(race_reduced_f),
+      !is.na(lc_agree_disagree)
+    )
+
+gender_plot <- ggplot(
+    d[!is.na(d$lc_agree_disagree), ],
+    aes(gender_f, A_or_B, fill = lc_agree_disagree)
+    ) +
+  geom_bar(stat = "summary", fun.y = "mean", position = "dodge", color = "black") +
+  coord_cartesian(ylim = c(0, .7)) +
+  ug.se_error_bar +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ylab("Likelihood of earning an\nA or a B in class") +
+  xlab("") +
+  SCALE_FILL +
+  THEME
+
+ggsave(REPO %+% "graphs/lc_by_race3.pdf", width = 7, height = 4, units = "in")
+
+
+race_plot <- ggplot(
+    d_reduced,
+    aes(reorder(race_reduced_f, A_or_B), A_or_B, fill = lc_agree_disagree)
+    ) +
+  geom_bar(stat = "summary", fun.y = "mean", position = "dodge", color = "black") +
+  coord_cartesian(ylim = c(0, .7)) +
+  ug.se_error_bar +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ylab("Likelihood of earning an\nA or a B") +
+  xlab("") +
+  SCALE_FILL +
+  THEME
+
+
+# by non-math GPA
+gpa_plot <- ggplot(
+    d[!is.na(d$lc_agree_disagree),], 
+    aes(q4_non_math_gpa_two_bins, A_or_B, fill = lc_agree_disagree)
+  ) +
+  geom_bar(stat = "summary", fun.y = "mean", position = "dodge", color = "black") +
+  ug.se_error_bar +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  coord_cartesian(ylim = c(0, .7)) +
+  ylab("Likelihood of earning an A or a B in other classes") +
+  xlab("\nOther Class GPA") +
+  SCALE_FILL +
+  THEME
+ggsave(REPO %+% "graphs/lc_by_nonmath_gpa.pdf")
+
+race_gpa_plot <- arrangeGrob(
+  race_plot + theme(legend.position = "none"),
+  gpa_plot + theme(legend.position = "right") + xlab("") + ylab(""),
+  nrow = 1
+)
+
+race_gender_plot <- arrangeGrob(
+  race_plot + theme(legend.position = "none"),
+  gender_plot + theme(legend.position = "right") + xlab("") + ylab(""),
+  nrow = 1
+)
+
+ggsave(REPO %+% "graphs/race_gpa.png", race_gpa_plot, width = 10, height = 3, units = "in", dpi = "print")
+ggsave(REPO %+% "graphs/race_gender.png", race_gender_plot, width = 10, height = 3, units = "in", dpi = "print")
+ggsave(REPO %+% "graphs/race_plot_external.png", race_plot, width = 5, height = 3, units = "in", dpi = "print")
+
+# get the overall percentages
+d %>%
+    dplyr::filter(!is.na(lc_agree_disagree)) %>%
+    group_by(lc_agree_disagree) %>%
+    summarise(A_or_B = mean(A_or_B))
+
+minimal_model <- glm(A_or_B ~ lc_agree_disagree, data = d, family = "binomial")
+stargazer(minimal_model,
+  star.cutoffs = c(.05, .01, .001),
+  notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+  notes.label  = "",
+  notes.append = FALSE,
+  single.row=TRUE,
+  header=FALSE
+  )
+
+all_controls_glm <- glm(A_or_B ~ lc_agree_disagree + q4_non_math_gpa + race_intercept_f + ell + frpl + school,
+                    data = d, family = "binomial") 
+stargazer(all_controls_glm,
+  star.cutoffs = c(.05, .01, .001),
+  notes        = "1 star p<.05; 2 stars p<.01; 3 stars p<.001",
+  notes.label  = "",
+  notes.append = FALSE,
+  single.row=TRUE,
+  header=FALSE
+)
+
+all_controls_lm <- lm(A_or_B ~ lc_agree_disagree + q4_non_math_gpa + race_intercept_f + ell + frpl + school,
+                    data = d, family = "binomial") 
+summary(all_controls_lm)
+
+
+d %>%
+    group_by(race_cat, gender) %>%
+    summarise(n = n())
+
+d_AA_boys <- d %>%
+    dplyr::filter(
+        race_cat %in% "black",
+        !gender %in% "Female"
+    )
+
+d_AA_boys %>%
+    group_by(lc_agree_disagree) %>%
+    summarise(
+        n = n(),
+        A_or_B = mean(A_or_B)
+    )
+
+
+glm(A_or_B ~ lc_agree_disagree + q4_non_math_gpa + ell + frpl, data = d_AA_boys, family = "binomial") %>%
+    summary # not quite significant
+
+cor.test(d_AA_boys$lc_agree_disagree_numeric, d_AA_boys$A_or_B)
+
+```
+
+```[r]
+
+
+
+## discipline
+ggplot(d, aes(as.factor(lc_bin), q4_suspensions)) +
+  geom_boxplot() 
+
+ggplot(d[!is.na(d$lc_bin),], aes(as.factor(lc_bin), as.numeric(q4_suspensions_any))) +
+  geom_bar(stat = "summary", fun.y = mean) +
+  ug.se_error_bar
+
+ggplot(d[!is.na(d$lc_bin),], aes(as.factor(lc_bin), as.numeric(q4_suspensions))) +
+  geom_bar(stat = "summary", fun.y = mean) +
+  ug.se_error_bar 
+
+## absences
+ggplot(d, aes(as.factor(lc_bin), q4_suspensions)) +
+  geom_boxplot() 
+
+ggplot(d[!is.na(d$lc_bin),], aes(as.factor(lc_bin), as.numeric(q4_present_high))) +
+  geom_bar(stat = "summary", fun.y = mean) +
+  ug.se_error_bar
+```
+
+
+```{r}
+# item analyses
+# Do particular LCs matter for particular groups of students?
+
+dm <- d[c("student_id", "race_cat", "lc_bin", "tc", "fg", "mw", "A_or_B")] %>%
+  melt(id.vars = c("student_id", "race_cat", "A_or_B"), measure.vars = c("tc", "fg", "mw")) %>%
+  rename(lc_score = value) %>%
+  mutate(lc_score_bins = floor(lc_score))
+
+dm$lc_agree_disagree <- ifelse(dm$lc_score > 5, "agree or strongly agree", "Negative conditions") %>%
+    factor(levels = c("Negative conditions", "agree or strongly agree"))
+
+# overall lines
+ggplot(dm, aes(x = lc_score_bins, y = A_or_B, fill = race_cat)) +
+  geom_line(stat = "summary", fun.y = mean) +
+  ug.se_error_bar +
+  facet_grid(variable ~ .)
+
+A_or_B_by_race <- ggplot(dm[!is.na(dm$lc_agree_disagree),], aes(x = race_cat, y = A_or_B, fill = lc_agree_disagree)) +
+  geom_bar(stat = "summary", fun.y = mean, position = "dodge") +
+  ug.se_error_bar  +
+  facet_grid(variable ~ .) + 
+  ylab("Likelihood of earning an A or a B") +
+  xlab("Race") +
+  SCALE_FILL + 
+  THEME
+
+ggsave(REPO %+%  "graphs/AorB_by_race.png", A_or_B_by_race, width = 10, height = 7, units = "in", dpi = "print")
+
+
+### plotting comb_lc by race
+
+lc_by_race <- ggplot(dm, aes(race_cat, lc_score)) +
+  geom_bar(stat = "summary", fun.y = "mean") +
+  ug.se_error_bar +
+  facet_grid(variable ~ .) + 
+  xlab("Race") + 
+  ylab("LC scores") +
+  SCALE_FILL + 
+  THEME
+
+  ggsave(REPO %+% "graphs/lc_by_race.png", lc_by_race, width = 10, height = 7, units = "in", dpi = "print")
+
+
+
+```
+
+# Tweet storm 2020
+```{r}
+# When teachers create supportive learning conditions, students of color are 68% more likely to earn As and Bs
+d$race_disadv <- ifelse(
+  d$race_cat %in% c("hispanic", "black", "pacisl", "multirace", "amindian"), "Str. Disadv.",
+  ifelse(d$race_cat %in% c("white", "asian"), "Str. Adv.", NA)
+)
+
+```

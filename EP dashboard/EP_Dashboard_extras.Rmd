@@ -1,0 +1,234 @@
+---
+title: "Dashboard Extras"
+author: "Dan Greene"
+date: "11/7/2019"
+output: html_document
+---
+
+CM found these chunks in the old EP Dashboard script that weren't doing anything.
+
+```{r}
+
+# Student demographic tables, if desired
+
+# student_demogs %>%
+#   group_by(gender) %>%
+#   summarise(n_students = n()) %>%
+#   rename(Gender = gender,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Gender Identification")
+# 
+# student_demogs %>%
+#   group_by(race_cat) %>%
+#   summarise(n_students = n()) %>%
+#   rename(Race = race_cat,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Race Identification (2 groups)")
+# 
+# student_demogs %>%
+#   group_by(race6) %>%
+#   summarise(n_students = n()) %>%
+#   rename(Race = race6,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Race Identification (6 groups)")
+# 
+# student_demogs %>%
+#   group_by(ELL_status) %>%
+#   summarise(n_students = n()) %>%
+#   rename("ELL Status" = ELL_status,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student ELL Identification")
+# 
+# student_demogs %>%
+#   group_by(marginalized) %>%
+#   summarise(n_students = n()) %>%
+#   rename("Marginalized Status" = marginalized,
+#          "Number of Students" = n_students) %>%
+#   kable(caption = "Student Marginalized Status (Black, Latin@, NatAm, ELL, and/or Title I)")
+
+
+# Monthly active students and teachers
+# d %>%
+#   mutate(year_month = substr(StartDate_formatted, 1, nchar(StartDate_formatted)-3)) %>%
+#   arrange(year_month) %>%
+#   group_by(year_month) %>%
+#   summarise(num_students = length(unique(userID)),
+#             num_teachers = length(unique(teacher_id))) %>%
+#   filter(!year_month %in% "2019-03") %>%
+#   summarise(mean_students = mean(num_students),
+#             mean_teachers = mean(num_teachers))
+
+```
+
+
+```{r, warning = FALSE}
+
+# Boxplot of overall fidelities
+
+# melted_fidelities <- melt(class_fidelities[, c("class_tuq", "class_honesty")])
+# melted_fidelities$variable <- as.character(melted_fidelities$variable)
+# melted_fidelities$variable <- util.recode(melted_fidelities$variable,
+#                                           c("class_tuq", "class_honesty"),
+#                                           c("Teacher Will Use Responses",
+#                                             "Student Feels Safe Being Honest"))
+# ggplot(melted_fidelities, aes(variable, value*100)) +
+#   geom_boxplot() +
+#   geom_abline(slope = 0, intercept = .8,
+#               color = "red", linetype = 2) +
+#   xlab("Fidelity Variable") +
+#   ylab("% of students who agree") +
+#   scale_y_continuous(breaks = seq(0, 100, 10)) +
+#   ggtitle("Distributions of Most Recent Class Fidelity Scores")
+# 
+# 
+# # Is student fidelity changing over time - in general and across teams?
+# 
+# # create melted data
+# student_fidelity_change <- d %>%
+#   arrange(userID, week_start) %>%
+#   group_by(userID) %>%
+#   summarise(team_id = first(team_id),
+#             first_tuq = first(na.omit(teacher_use_qs)),
+#             last_tuq = last(na.omit(teacher_use_qs)),
+#             n_tuq = length(teacher_use_qs),
+#             first_honesty = first(na.omit(honest_comfort)),
+#             last_honesty = last(na.omit(honest_comfort)),
+#             n_honesty = length(honest_comfort)) %>%
+#   filter((n_tuq > 1) & n_honesty > 1) %>% # remove students with only one measurement
+#   mutate(n_tuq = NULL, n_honesty = NULL) %>%
+#   melt(id.vars = c("userID", "team_id"))
+# # mutate and cast
+# student_fidelity_change$fidelity_var <- ifelse(grepl("tuq", student_fidelity_change$variable),
+#                                                "tuq", "honesty")
+# student_fidelity_change$position <- ifelse(grepl("first", student_fidelity_change$variable),
+#                                                "first", "last")
+# student_fidelity_change_summary <- student_fidelity_change %>%
+#   group_by(team_id, fidelity_var, position) %>%
+#   summarise(mean_value = mean(value))
+# 
+# # plot - fidelity scores are not going down.
+# ggplot(student_fidelity_change[student_fidelity_change$fidelity_var %in% "tuq", ],
+#        aes(position, value, group = team_id, color = team_id)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1,
+#                                 fun.args=list(conf.int=.95)) +
+#   ylim(1, 5) +
+#   ggtitle("Average change in student TUQ scores from first to last measure")
+# ggplot(student_fidelity_change[student_fidelity_change$fidelity_var %in% "honesty", ],
+#        aes(position, value-1, group = team_id, color = team_id)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1,
+#                                 fun.args=list(conf.int=.95)) +
+#   ylim(0,1) +
+#   ggtitle("Average change in student honesty scores from first to last measure")
+# 
+# 
+# # These tables display specific negative outlier classes! Sensitive data!
+# write.csv(class_fidelities[class_fidelities$is_neg_tuq_outlier %in% TRUE,
+#                          c("class_name", "teacher_email", "team_name", "class_tuq")],
+#           file = "low_tuq_classes.csv")
+# write.csv(class_fidelities[class_fidelities$is_neg_honesty_outlier %in% TRUE,
+#                          c("class_name", "team_name", "class_honesty")],
+#           file = "low_honesty_classes.csv")
+
+```
+
+# Improvement
+
+```{r, warning = FALSE, fig.width = 12, fig.height = 6}
+
+
+# Makin some graphs:
+
+# ## Melt and restructure data using deltas
+# # melt again to melt out position (first/last)
+# dm <- melt(deltas,
+#            id.vars = setdiff(names(deltas), c("first_value", "last_value")),
+#            measure.vars = c("first_value", "last_value")) %>%
+#   rename(position = variable,
+#          in_marginalized_group = marginalized)
+# 
+# # clean up
+# dm$position <- util.recode(as.character(dm$position),
+#                            c("first_value", "last_value"),
+#                            c("First", "Last"))
+# dm$variable <- util.recode(as.character(dm$metric),
+#                            c("fg", "mw", "tc"),
+#                            c("Feedback for Growth", "Meaningful Work", "Teacher Caring"))
+# dm$implementation_fidelity <- ifelse(dm$high_fidelity_class,
+#                                      "High", "Low")
+
+# Graph: changes in individual student learning-condition scores across classroom implementation fidelity
+# ggplot(dm, aes(position, value, 
+#                group = implementation_fidelity,
+#                color = implementation_fidelity)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1, 
+#                                 fun.args=list(conf.int=.95)) +
+#   facet_grid(. ~ variable) +
+#   scale_y_continuous(breaks=seq(1, 7, .5)) +
+#   scale_color_brewer(palette = "Set1") +
+#   xlab("Time of Measurement") +
+#   ylab("Average response to learning-condition questions (1-7)") +
+#   labs(color = "Classroom Implementation Fidelity")  +
+#   ggtitle("Changes in individual student learning-condition scores across classroom implementation fidelity")
+
+
+
+# Unused: graph of raw improvement deltas across fidelity AND marg status
+# ggplot(dm, aes(position, value,
+#                group = interaction(high_fidelity_class, in_marginalized_group),
+#                color = high_fidelity_class,
+#                linetype = in_marginalized_group)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1,
+#                                 fun.args=list(conf.int=.95)) +
+#   facet_grid(. ~ variable) +
+#   scale_y_continuous(breaks=seq(1, 7, .5)) +
+#   scale_color_brewer(palette = "Set1") +
+#   xlab("Time of Measurement") +
+#   ylab("Value") +
+#   ggtitle("Changes in individual student LC ratings, first-last measure, " %+%
+#           "across class fidelity and marginalized status")
+
+```
+
+
+
+```{r, fig.width = 12, fig.height = 6}
+
+# Improvement graphs at the classroom pct-good level
+
+
+# # aggregate data to LC level
+# di_melt_class_cycle_lc <- di_melt_class_cycle %>%
+#   group_by(class_id, time, lc) %>%
+#   summarise(pct_good = mean(pct_good),
+#             high_fidelity_class = first(high_fidelity_class))
+# di_melt_class_cycle_lc$implementation_fidelity <- ifelse(di_melt_class_cycle_lc$high_fidelity_class,
+#                                      "High", "Low")
+
+
+# ggplot(di_melt_class_cycle_lc,
+#        aes(time, pct_good, 
+#                group = implementation_fidelity,
+#                color = implementation_fidelity)) +
+#   geom_line(stat = "summary", fun.y = "mean", size = 1) +
+#   ug.stat_sum_df( fun="mean_cl_boot", fun.y="mean",
+#                                 geom="errorbar", width=.1, 
+#                                 fun.args=list(conf.int=.95)) +
+#   facet_grid(. ~ lc) +
+#   scale_color_brewer(palette = "Set1") +
+#   scale_y_continuous(labels = scales::percent,
+#                      breaks = seq(0, 1, .1)) +
+#   xlab("Time of Measurement") +
+#   ylab("Percent of Class that Agrees or Strongly Agrees") +
+#   labs(color = "Classroom Implementation Fidelity")  +
+#   ggtitle("Changes in classroom learning condition percent-good scores \nacross implementation fidelity (imputed data)")
+
+
+```

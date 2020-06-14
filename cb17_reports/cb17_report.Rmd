@@ -1,0 +1,883 @@
+---
+output:
+  html_document:
+    fig_caption: no
+    toc: no
+    theme: spacelab
+    css: https://raw.githubusercontent.com/PERTS/gymnast/master/Rmd/rmd_styles.css
+---
+```{r results='hide', message=FALSE, warning=FALSE, echo=FALSE, eval = TRUE}
+knitr::opts_chunk$set(results='asis', eval=TRUE, warning=FALSE, echo=FALSE, message=FALSE, fig.height = 3)
+expected_variables <- c("d_f", "items", "org_name", "org_name_full", "present_metrics",
+                        "present_subset_groups",
+                        "MIN_CELL", "present_drivers", "DRIVER_GRAPH_COLORS",
+                        "OUTCOME_COLORS", "PROBABILITY_THRESHOLD", "progress_vars",
+                        "report_vars")
+if(!exists("org_name")){
+  org_name <- report_sites[1]
+}
+
+if(!exists("org_name_full")){
+  org_name_full <- report_sites_full_name[1]
+}
+
+
+nothing <- lapply(expected_variables, function(var){
+    if(!exists(var)){
+        stop(var %+% " was not passed in!")
+    }
+})
+
+#################################################################################
+############## Create some plotting parameters ################################
+
+#pc_cohort_label_readable <- sentence_case(pc_cohort_label)
+plot_title_size <- 12
+panel_margin <- .2
+
+#################################################################################
+######### Create data for graphs and analyses ###################################
+
+# filter data to desired org_name and relevant columns
+d <- d_f[
+    d_f$school_name %in% org_name,
+    c("participant_id", present_subset_groups, present_metrics, progress_vars, report_vars)
+]
+school_name_full <- d_f$school_name_full[d_f$school_name %in% org_name] %>% unique
+if (ANONYMOUS) {
+      school_name_full <- ANONYMOUS_NAME
+      org_name_full <- ANONYMOUS_NAME
+  
+}
+
+
+
+
+
+# comput pct_ variables which will appear as dynamic entries
+
+
+nomin <- sum(d$y2_belonging > d$y1_belonging, na.rm = TRUE)
+denomin <- sum(!is.na(d$y2_belonging) & !is.na(d$y1_belonging))
+pct_belonging <- (nomin/denomin) %>% print_perc
+
+nomin <- sum(d$t1__dv__diff1__transition >= 3, na.rm = TRUE)
+denomin <- sum(!is.na(d$t1__dv__diff1__transition))
+pct_difficult <- (nomin/denomin) %>% print_perc
+
+nomin <- sum(d$t1__dv__diff2__experience_at_first >= 4, na.rm = TRUE)
+denomin <- sum(!is.na(d$t1__dv__diff2__experience_at_first))
+pct_difficulties_at_first <- (nomin/denomin) %>% print_perc
+
+nomin <- sum(d$t1__dv__difficulties_pos <= 3, na.rm = TRUE)
+denomin <- sum(!is.na(d$t1__dv__difficulties_pos))
+pct_pos_difficulties <- (nomin/denomin) %>% print_perc
+
+nomin <- sum(d$t1__dv__enthusiasm1__excited >= 5, na.rm = TRUE)
+denomin <- sum(!is.na(d$t1__dv__enthusiasm1__excited))
+pct_excited <- (nomin/denomin) %>% print_perc
+
+nomin <- sum(d$t1__dv__enthusiasm2__enjoy >= 5, na.rm = TRUE)
+denomin <- sum(!is.na(d$t1__dv__enthusiasm2__enjoy))
+pct_enjoy <- (nomin/denomin) %>% print_perc
+
+nomin <- sum(d$t1__dv__enthusiasm3__fun >= 5, na.rm = TRUE)
+denomin <- sum(!is.na(d$t1__dv__enthusiasm3__fun))
+pct_fun <- (nomin/denomin) %>% print_perc
+
+
+# make a copy of items and replace dynamic entries
+items_cp <- items
+cols_to_change <- c("question_text","tbl_title", "tbl_col_title")
+items_cp[,cols_to_change] <- items_cp[,cols_to_change]  %>% 
+  lapply(., function(x) gsub("\\[SCHOOL NAME\\]", school_name_full, x))
+
+
+#### CREATE PARTICIPATTION TABLE
+# participation table
+
+# get expected sample size
+school_name <- as.character(org_name)
+
+
+buff_df <- d[,c("disadv_status","teasertxt","txtDVintro", "t1__demog__tech_difficulty")]
+table_df_all <- buff_df
+table_df_all$group <- "All Students"
+table_df_status <- buff_df
+table_df_status$group <- table_df_status$disadv_status
+table_df <- rbind(table_df_all, table_df_status)
+table_df <- table_df[!is.na(table_df$group),]
+
+table_df$disadv_status <- NULL
+
+table_df$stage_0 <- ifelse(table_df$teasertxt == 1, 1,0)
+table_df$stage_0[is.na(table_df$stage_0)] <- 0
+table_df$stage_1 <- ifelse(table_df$txtDVintro == 1, 1,0)
+table_df$stage_1[is.na(table_df$stage_1)] <- 0
+
+table_df$stage_2 <- ifelse(!is.na(table_df$t1__demog__tech_difficulty), 1,0)
+
+table_df$teasertxt <- NULL
+table_df$txtDVintro <- NULL
+table_df$t1__demog__tech_difficulty <- NULL
+
+table_df_melted <- table_df %>% melt(., id.vars = c("group"))
+table_grouped <- table_df_melted %>% 
+  group_by(group, variable) %>% 
+  summarise (count = sum(value))
+
+table_grouped$group <- factor(table_grouped$group, levels = c("All Students","Advantaged", "Disadvantaged"))
+
+table_grouped <- table_grouped[!is.na(table_grouped$group),]
+table_casted <- table_grouped %>% dcast(group ~ variable) %>% t() %>% as.data.frame()
+names(table_casted) <- table_casted[1,]
+progress_tbl <- table_casted
+progress_tbl[,"Stage or Module"] <- rownames(progress_tbl)
+
+
+#reorder columns
+progress_tbl <- progress_tbl[ ,c("Stage or Module", "All Students","Advantaged", "Disadvantaged")]
+first_col_vals <-c(
+  "Opened activity",
+  "Finished primary reading-and-writing activity",
+  "Finished post-activity survey questions"
+)
+progress_tbl <- progress_tbl[2:4,]
+progress_tbl$`Stage or Module` <- first_col_vals
+
+rownames(progress_tbl) <- NULL
+
+
+#### END OF PARTICIPATION TABLE
+
+
+
+
+# replace dynamic entries in text entries
+t_e_cp <- t_e %>% 
+  lapply(., function(x) gsub("\\[SCHOOL NAME\\]", school_name_full, x))  %>% 
+  # add date
+  lapply(., function(x) gsub("\\[DATE\\]", Sys.Date(), x)) %>%
+  # add pct_ variables
+  lapply(., function(x) gsub("\\[pct_belonging\\]", pct_belonging, x)) %>%
+  lapply(., function(x) gsub("\\[pct_difficult\\]", pct_difficult, x)) %>%
+  lapply(., function(x) gsub("\\[pct_difficulties_at_first\\]",
+         pct_difficulties_at_first, x)) %>%
+  lapply(., function(x) gsub("\\[pct_pos_difficulties\\]", 
+         pct_pos_difficulties, x)) %>%
+  lapply(., function(x) gsub("\\[pct_excited\\]", pct_excited, x)) %>%
+  lapply(., function(x) gsub("\\[pct_enjoy\\]", pct_enjoy, x)) %>%
+  lapply(., function(x) gsub("\\[pct_fun\\]", pct_fun, x)) %>%
+  lapply(., function(x) gsub("\\[n_compl_progr\\]", progress_tbl[3,2], x)) 
+
+```
+<style>
+/* override the pdf generator default style */
+@page{
+@top-right {
+content: url("`r ctc_perts_logo_path`");
+color: black;
+}
+@bottom-right {
+color: white;
+}
+}
+#cover_page {
+text-align: left;
+}
+#cover_page img {
+width: 100%;
+#center_align {
+text-align: center;
+}
+</style>
+<div id="cover_page">
+<div id="title">
+
+
+
+# Social-Belonging for College Students
+## Results for `r org_name_full` 
+### 2017
+<br>
+<img src= `r paste('"',ctc_big_logo_path,'"', sep = "")` style='width:250px;' />
+<br>
+<img src= `r paste('"',perts_logo_path,'"', sep = "")` style='width:250px;' />
+<br>
+</div>
+<div class="cover-info">
+<div class="cover-date-wrapper">
+<div class="cover-date">
+`r "DATE: " %+% Sys.Date()`
+</div>
+</div>
+</div>
+</div>
+
+
+```{r results='asis'}
+cat(t_e_cp$chunk_1)
+```
+
+
+```{r results='asis'}
+# draw Figure 1
+
+id_vars <- c(all_subset_groups)
+d$row_ind <- 1:nrow(d)
+
+
+datasets_melted <- melt(d, id.vars = c(id_vars, "row_ind"))
+
+datasets_melted$question_code <- datasets_melted$variable
+datasets_melted$variable <- NULL
+
+items_cp$question_code <- items_cp$variables
+datasets_melted <- 
+    merge(datasets_melted, 
+          items_cp[,c("question_code","min_good","max_good", "wrap_size")], 
+          by="question_code")
+
+
+# calculate whether response is in the "good" range for that metric
+datasets_melted$metric <- datasets_melted$question_code
+datasets_melted$value <- as.numeric(datasets_melted$value)
+datasets_melted$good_range <- 
+    datasets_melted$value <= datasets_melted$max_good &
+    datasets_melted$value >= datasets_melted$min_good 
+datasets_melted$good_range <- ifelse(datasets_melted$good_range,1,0)
+
+# metrics have an undefined range if NA values appear in good_range
+# that do NOT correspond to NAs in the `value` column. (when 
+# NA values appear in the good_range column AND the value column, 
+# that just means there's missing data; i.e., the survey-taker 
+# missed that particular question)
+metrics_with_undefined_range <- 
+    datasets_melted$metric[
+        is.na(datasets_melted$good_range) & !is.na(datasets_melted$value)
+    ] %>%
+    as.character() %>%
+    unique()
+
+# drop any metrics with undefined ranges
+datasets_melted <- 
+    datasets_melted[! datasets_melted$metric %in% metrics_with_undefined_range,]
+
+# create ag_metrics dataframe with all of aggregated metrics
+ag_metrics_list <- list()
+ag_metrics_list[["Full"]] <- datasets_melted %>% 
+    group_by( metric) %>%
+    summarise( pct_good = mean(good_range, na.rm=T) ,
+               se = se(good_range),
+               n = length(good_range),
+               subset_feature="All Students"
+    ) %>% data.frame()
+ag_metrics_list[["Full"]][,"subset"] <- "All Students"
+ag_metrics_list[["Full"]][,"subset_label"]  <-  "All Students"
+
+###
+SUBSETS <- present_subset_groups
+for(subset in SUBSETS){
+    grouping <- c("metric" , subset)
+    subset_ag_dataset <- 
+        datasets_melted %>% 
+        group_by_( .dots=grouping ) %>%
+        summarise( pct_good = mean(good_range, na.rm=T) ,
+                   se = se(good_range),
+                   n = length(good_range),
+                   subset_feature = subset
+        ) %>% data.frame()
+    subset_ag_dataset[,"subset"] <- subset_ag_dataset[,subset] 
+    subset_ag_dataset[,"subset_label"] <- 
+        paste0( subset_ag_dataset[,subset], 
+               rep(" Students", nrow(subset_ag_dataset)))
+
+    ag_metrics_list[[subset]] <- subset_ag_dataset
+}
+
+ag_metrics <- util.rbind_intersection(ag_metrics_list) %>%
+    filter(!is.na(subset))
+
+
+
+##  Privacy
+##  Remove any subset with a group that has n < min_cell.
+##  Note: removing just the offending offending cell not good enough because
+##  let's say n=30, total=72%, Latino=74%. If only one non-Latino, 
+##      you know they're in the "bad" range.
+##  pixelate groups with no variance (add se even if it does not exist)
+
+# ag_metrics$pct_good[ag_metrics$n < min_cell] <- NA
+
+# pixelate se and pct_good
+# if no variance, impute smallest non-zero se
+# if no pct_good, impute one person worth of it
+ag_metrics$se[ag_metrics$se == 0] <- min(ag_metrics$se[ag_metrics$se > 0], na.rm = TRUE)
+ag_metrics$se[is.na(ag_metrics$se) & ! is.na(ag_metrics$pct_good)] <-
+    min(ag_metrics$se[ag_metrics$se > 0 ], na.rm=TRUE)
+# here we're replacing "0" with the smallest possible proportion of "good" responses
+# so as not to implicate a whole group of students for having uniformly 
+# "bad" responses.
+ag_metrics$pct_good[ag_metrics$pct_good %in% 0] <- 
+    1 / ag_metrics$n[ag_metrics$pct_good %in% 0]
+
+min_cell <- MIN_CELL
+# find all the rows corresponding to small n's
+small_rows <- ag_metrics[ag_metrics$n < min_cell,]
+# currently this line does not include groups which are missing. 
+# their sample size is not 0, they are just missing. This leads to
+# the problem that the counterparts of the n of 0 groups are not being 
+# excluded
+
+# A non-elegant solution here (it will be better to do it on the level
+# of melt and cast) :
+
+# I will remove those categories which have only one level (e.g. only male, or only White)
+# I will refer to those as large_rows (because their n i high)
+# I will also remove those rows with n smaller than the minimum allowed
+# Those are referred to as small rows (because n is small)
+
+# I assume that there are only two levels per category here
+large_rows <- ag_metrics %>% 
+  group_by(
+    subset_feature,metric) %>% 
+  summarise(n_levels = n()) %>%
+  filter(subset_feature != "All Students") %>%
+  mutate(delete_small_subset = TRUE)
+
+# check if the assumption is correct
+if (max(large_rows$n_levels, na.rm = T) > 2) {
+   msg <- 
+    "The assumption for binary comaprisons does not hold" %+%
+    team_id %+% ", " %+% reporting_unit_id
+  stop(msg)
+}
+
+# select only those categories which have only one level
+large_subsets <- 
+  large_rows[large_rows$n_levels %in% 1,]  %>%
+  dplyr::select(- n_levels) %>%
+  unique()
+
+small_subsets <- small_rows[,c("subset_feature","metric")] %>%
+                    unique() %>%
+                    mutate(delete_small_subset = TRUE)
+
+small_subsets <- bind_rows(small_subsets, large_subsets)
+small_subsets <- small_subsets[!duplicated(small_subsets),]
+# remove duplicates (e.g. those who have only one level, such as Female, and n = 2)
+
+
+# delete values from all rows matching any subset feature/metric/dataset/week start 
+# combos that had small n's. That way, you're not just deleting e.g., the 
+# one gender value with < 5 responses; you're deleting gender as a category 
+# from the report for that dataset/metric/day.
+ag_metrics <- merge(
+    ag_metrics,
+    small_subsets,
+    by = c("subset_feature","metric"),
+    all = TRUE
+) %>%
+    mutate(delete_small_subset = !is.na(delete_small_subset))
+
+ag_metrics[ ag_metrics$delete_small_subset, c("pct_good","se") ] <- NA
+
+#ag_metrics$grand_mean <- ifelse(ag_metrics$subset %in% "All","All","Subset")
+# !!! @todo: there might be a bug here. Instead of "All" probably we need "All Students"
+# I will replace it with the correct string (according me) but I will leave the original in case
+# we need to undo it
+ag_metrics$grand_mean <- ifelse(ag_metrics$subset %in% "All Students","All Students","Subset")
+
+
+##############################################################################
+# calculate the omnibus p
+# the probability of differences by group being nonrandomly distinct
+
+
+# double melted data (dm) allows for metric (value) ~ subset_feature
+datasets_melted$variable <- NULL
+datasets_melted$question_code <- NULL
+dm <- melt(datasets_melted, 
+           id.vars=c("metric","value"), 
+           value.name="subset" 
+)
+dm <- dm[ dm$variable %in% SUBSETS, ]
+
+dm_with_p <- dm %>% 
+    group_by( metric, variable) %>%
+    summarise( p=p_aov(value, subset) )
+dm_with_p$subset_feature <- dm_with_p$variable
+
+ag_metric_with_p <- merge(
+    ag_metrics, 
+    dm_with_p, 
+    by=c("metric", "subset_feature"),
+    all.x=TRUE
+) 
+
+##############################################################################
+#   Append Driver Information
+
+items_renamed <- rename(items_cp, metric=question_code)
+
+agm <- merge(
+    ag_metric_with_p,
+    items_renamed,
+    by="metric"
+)
+
+agm$grand_mean <- ifelse(agm$subset %in% "All Students","All Students","Subset")
+
+
+drivers_in_data <- agm$driver %>% unique
+
+```
+
+
+```{r , results = 'asis', message=FALSE, warning=FALSE, echo = FALSE, eval = TRUE, fig.width = 4.5, fig.align='center'}
+triage_columns <- c("driver","pct_good","question_text")
+pre_triage <- agm[, triage_columns]
+pre_triage <- 
+    pre_triage[ ! duplicated(pre_triage[,c("question_text")]), ]
+
+## Print out the driver graphs
+
+plot_title_size <- 12
+panel_margin <- .2
+
+# set some factor levels for good graphing
+all_subsets <- agm$subset %>% unique
+all_subsets_ordered <- c("All Students", setdiff(all_subsets, "All Students"))
+agm$subset <- factor(agm$subset, all_subsets_ordered)
+agm$grand_mean <- factor(agm$grand_mean, c("All Students", "Subset"))
+
+for(driver in present_drivers){
+    driver_label <- sentence_case(driver)
+    driver_label_title_case <- driver_label %>% toTitleCase()
+    
+    # print out driver descriptions
+    driver_header <- "<h2 id='" %+% driver %+% "'>Learning Condition: " %+% 
+        driver_label_title_case %+% "</h2>"
+ 
+    # driver_df is now the subset of driver_df where the driver matches 
+    # the driver we're iterating over, and the pct_good value is not NA
+    driver_df <- agm[agm$driver %in% driver &
+                         !is.na(agm$pct_good),]
+    
+    # create human readable labels for graph axes and panels
+    
+    #### add school name before wraping
+    driver_df$question_text <- 
+      gsub("\\[SCHOOL NAME\\]", school_name_full, driver_df$question_text)
+    
+    
+
+    # add a parameter to control wrap width
+    buff_df <- driver_df[,c("question_text", "wrap_size")]
+    buff_df <- buff_df[!duplicated(buff_df),] 
+    wrap_widths <-  as.list(buff_df$wrap_size) %>% as.numeric
+    names(wrap_widths) <- buff_df$question_text
+    
+
+    driver_df$question_text_wrapped <- lapply(
+        driver_df$question_text,
+        function(x) wrap_text(x, width = wrap_widths[[x]]) #original width was 25
+    ) %>% 
+        unlist()
+    driver_df$y_label <- lapply(
+        driver_df$y_label,
+        function(x) wrap_text(x, width = 30) #original width was 25
+    ) %>% 
+        unlist() 
+    
+
+    # make questions factor levels, so they are printed in the same order
+
+    driver_df_most_recent <- driver_df
+    
+    ###################################
+    # add gray bars with NA when students are missing
+    # we will need to restructure the input database used by ggplot
+    
+    # take Cartesian product
+    grid_df <- expand.grid(
+      "metric" = unique(driver_df_most_recent$metric),
+      #"subset" = unique(driver_df_most_recent$subset)
+      "subset" = c("All Students", "Advantaged", "Disadvantaged")
+    )
+    driver_df_most_recent$imputed_row <- FALSE
+    # There is a problem with grid_df. It doesn't include categories which have NA in 
+    # pct_good. I will temporary repair this
+    
+    
+    grid_df <- merge(
+      grid_df,
+      driver_df_most_recent,
+      by = c("metric", "subset"),
+      all = TRUE)
+    
+    grid_df$imputed_row[is.na(grid_df$imputed_row)] <- TRUE
+    
+    grid_df <- replace_missing(
+      in_df = grid_df,
+      shared_col = "metric",
+      cols_to_fill_in = c(
+        "question_text_wrapped",
+        "question_text",
+        "y_label")
+    )
+    
+    grid_df <- replace_missing(
+      in_df = grid_df,
+      shared_col = "subset",
+      cols_to_fill_in = c(
+        "subset_feature")
+    )
+    
+    # add pct good, grand mean, text to display
+    grid_df$grand_mean[grid_df$imputed_row] <- "All Students"
+    
+    grid_df$comb_id <- paste(
+      grid_df$metric,
+      grid_df$dataset,
+      grid_df$grand_mean,
+      sep = "_"
+    )
+    
+    # replace missing pct_good with those from the overall mean
+    # for each corresponding group and subgroup
+    grid_df <- replace_missing(
+      in_df = grid_df,
+      shared_col = "comb_id",
+      cols_to_fill_in = c("pct_good"),
+      diverse_vals = TRUE
+    )
+    
+    grid_df$comb_id <-NULL
+    
+    grid_df$text_bar <- (100*grid_df$pct_good) %>%
+      round(.,0) %>%
+      paste(.,"%",sep = "")
+    
+    grid_df$text_bar[grid_df$imputed_row] <-"n/a"
+    
+    
+    levels(grid_df$grand_mean) <- c(levels(grid_df$grand_mean),"Imputed")
+    grid_df$grand_mean[grid_df$imputed_row] <- "Imputed"
+    
+    driver_df_most_recent <- grid_df
+    grid_df <- NULL
+    ######################################
+    # add significance stars
+    
+    # for each pair (e.g. male, female) it takes the highest value
+    # which later is used to determine height of the text entry
+    max_df <- driver_df_most_recent %>%
+      group_by(metric, subset_feature) %>%
+      summarise(
+        max_pct_good = max(pct_good, na.rm = TRUE)
+      )
+    
+    driver_df_most_recent <- merge(
+      driver_df_most_recent,
+      max_df,
+      by = c("metric", "subset_feature"),
+      all.x = TRUE,
+      all.y = FALSE
+    )
+    
+    driver_df_most_recent$p_aux <- driver_df_most_recent$p
+    driver_df_most_recent$p_aux[
+      is.na(driver_df_most_recent$p_aux)] <- 1.0
+    
+    driver_df_most_recent$sign_star <- ''
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$p_aux <.05] <- '*'
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$p_aux <.01] <- '**'
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$p_aux <.001] <- '***'
+    
+    excluded_labels <- c("All Students", "Disadvantaged")
+    driver_df_most_recent$sign_star[
+      driver_df_most_recent$subset %in% excluded_labels] <- ''   
+    
+    driver_df_most_recent$p_aux <- NULL
+    max_df <- NULL
+
+    
+    
+    #######################################
+    
+    # make sure no extra panels got added
+    unique_recent_question_levels <-
+      driver_df_most_recent$question_with_dates_wrapped %>% unique
+    unique_questions <- driver_df$metric %>% unique %>% as.character()
+    if(length(unique_recent_question_levels) > length(unique_questions)){
+        util.warn(driver %+% " driver in " %+% report_name %+% " plotted " %+%
+                      paste0(gsub("\n", " ", unique_recent_question_levels), collapse = "............ ") %+%
+                      "as panels, which is too many. There should only be " %+%
+                      length(unique_questions) %+% ".")
+    }
+    # set labels and titles
+    
+    graph_title <- driver_df_most_recent$graph_title %>% unique
+    graph_title <- graph_title[!is.na(graph_title)]
+    title_header <- "<b><font size='3'><id='" %+% driver %+% "'>" %+% 
+        graph_title %+% "</font></b>"
+    #cat('<div align="center">')
+    #title_header = "XXXXX"
+    #cat("</div>")
+    
+    
+    y_label <- driver_df_most_recent$y_label %>% unique
+    
+    driver_df_most_recent$color_var <- NA
+    old_vals <- c("All Students", "Subset", "Imputed")
+    new_vals <- c("#0a5894","#3faeeb", "#d0d0d0") 
+    driver_df_most_recent$color_var <- 
+      driver_df_most_recent$grand_mean %>%
+      as.character %>%
+      util.recode(., old_vals, new_vals)
+    
+    colors_ <- driver_df_most_recent$color_var %>% unique
+    
+    # CTC asked to display an explanation if gray bars are present
+    gray_bars_present <- any(driver_df_most_recent$text_bar == "n/a")
+    driver_cross_section <- 
+        ggplot( driver_df_most_recent, 
+                aes( subset, pct_good, fill=grand_mean, color=grand_mean ) 
+        ) +
+        #scale_x_discrete( limits=subset_no_all ) + 
+        geom_bar( 
+            stat="summary", fun.y="mean"
+        ) +
+        scale_fill_manual(
+            breaks=c("All","Subset"),
+            label=c("Control","Treatment"), # override condition names
+            values=colors_ ,
+            guide="none"
+        ) +
+        scale_colour_manual(  
+            guide="none", # removes the color guide
+            values=colors_ 
+        ) +
+        geom_text(
+              aes(label = text_bar), 
+              stat="summary", 
+              fun.y="mean", 
+              vjust = +1.3, 
+              size = ug.text_size/3,
+              color = "white",
+              fontface="bold") + 
+
+        #facet_grid( dataset_wrapped ~ question_with_dates_wrapped ) + 
+        facet_grid( .~ question_text_wrapped) +
+        scale_y_continuous( labels=percent, expand = c(.1, 0)) +
+        theme(
+            legend.key=element_rect(color="black", size=ug.text_size),
+            #axis.text=element_text(face="bold", size=ug.text_size ),
+            axis.text.x=element_text(
+                face="bold", 
+                size=ug.text_size,
+                angle=0,
+                hjust=.5),
+            axis.title=element_text(face="bold"),
+            panel.background    = element_blank() ,
+            #   make the major gridlines light gray and thin
+            panel.grid.major.y  = element_line( size=ug.line_size, colour="#C0C0C0" ),
+            #   suppress the vertical grid lines
+            panel.grid.major.x  = element_blank() ,
+            #   suppress the minor grid lines
+            panel.grid.minor    = element_blank() ,
+            #   adjust the axis ticks
+            axis.ticks    = element_line( size=ug.line_size , colour="black" ),
+            #   move the y-axis over to the left 
+            axis.title.x  = 
+                element_text( vjust=-.5 , 
+                              face="bold", 
+                              color="black", 
+                              angle=0, 
+                              size=ug.text_size ) ,
+            axis.text = 
+                element_text( vjust=0 , face="bold",
+                              color="black", angle=0, 
+                              size=ug.text_size ) ,
+            axis.title.y = 
+                element_text( vjust=.2 , color="black", angle=90, size=ug.text_size ) ,
+            plot.title = element_text(
+                colour="black", 
+                size=plot_title_size, 
+                face="bold", 
+                hjust=0,
+                vjust = 0),
+            plot.margin = unit(c(0,0,0,0), "cm"),
+            panel.margin = unit(panel_margin, "in")
+        ) + #theme(strip.switch.pad.grid = unit(5, "cm")) + 
+        xlab("") + ylab(y_label) +
+        coord_cartesian(ylim=c(0,1))
+    cat('<div class="page-do-not-break">')
+    cat(title_header)
+    cat("<br><br>")
+    cat('<div id="fig_print">')
+    print(driver_cross_section)
+    cat('</div>')
+    if (gray_bars_present) {
+      cat("<i>Gray bars in the graph above indicate that there were fewer than five students for at least one response option within the demographic category shown.</i>")
+    }
+    cat('</div>')
+    # selective print text after the first graph
+    if (driver == "belonging_diff") {
+      cat(t_e_cp$chunk_2)
+    }
+  }
+```
+
+
+<div class='page-break'></div>
+
+
+```{r results = 'asis'}
+cat(t_e_cp$chunk_3)
+
+cat("<br>")
+util.html_table(progress_tbl)
+```
+
+```{r results = 'asis'}
+cat(t_e_cp$chunk_4)
+cat(t_e_cp$chunk_5)
+```
+
+
+```{r results = 'hide'}
+# update the log files
+buff_df <- d
+org_name_simple  <- org_name %>% unlist %>% unname
+log_df$adv_n[log_df$school_name == org_name_simple] <- (buff_df$disadv_status == "Advantaged") %>% sum(., na.rm = T)
+log_df$disadv_n[log_df$school_name == org_name_simple] <- (buff_df$disadv_status == "Disadvantaged") %>% sum(., na.rm = T)
+log_df$total_n[log_df$school_name == org_name_simple] <- nrow(buff_df)
+log_df$cohort_name[log_df$school_name == org_name_simple] <- org_cohort_name
+```
+
+```{r results = 'asis'}
+# appendix
+appendix_tbl <- data.frame()
+if (nrow(d) > 50) {
+  ## total_n in tables might differ from variable due to different number of missing values
+  cat("<div class='page-break'></div>")
+  cat("<h1>Appendix</h1>")
+  cat(t_e_cp$chunk_6)
+  cat('<br>')
+  in_range <- function(x, min, max) {
+    #if a value in x is in the range min to max, returns T
+    x_out <- (x >= min) & (x <=max)
+    return(x_out)
+  }
+  
+  buff_df <- d
+  #replace gender Other
+  levels(buff_df$report_gender) <- c("Male",   "Female", "Identifies in another way" )
+  
+  
+  demogr_vars <- list(
+    "Race" = "report_race",
+    "Parent Education" = "report_par_ed",
+    "Gender" = "report_gender"
+  )
+  for (variable in items_cp$variables) {
+    # compute accptable answer
+    min_ = items_cp$min_good[items_cp$variables == variable]
+    max_ = items_cp$max_good[items_cp$variables == variable]
+    buff_df$dv <- buff_df[,variable] %>% in_range(.,min_, max_ ) %>% as.numeric
+    # all row
+    tbl_df <- data.frame(demogr_grp=c("All Students"),
+                   pct_good= mean(buff_df$dv, na.rm = T),
+                   n_good= sum(buff_df$dv, na.rm = T),
+                   sample_n= sum(!is.na(buff_df$dv)),
+                   stringsAsFactors = F) 
+    # loop and rbind through all categorical variables 
+    # and create summary tables
+    
+    # CTC requested a new feature: if a category level is masked with NA, we remove the whole category
+    #categories_to_remove <- c()
+    for( demog_var in names(demogr_vars)) {
+      new_tbl <- buff_df %>% 
+        group_by_(demogr_vars[[demog_var]]) %>% 
+        summarise (
+          pct_good = mean(dv,na.rm = T),
+          n_good =  sum(dv,na.rm = T),
+          sample_n = sum(!is.na(dv)),
+          n_good) %>%
+        as.data.frame()
+      # check if any of the cells are less than the minimum sample size
+      buff_name <- demogr_vars[[demog_var]] # the name differs from table to table
+      min_sample_n <- new_tbl$sample_n[!is.na(
+        new_tbl[,buff_name])] %>% min(., na.rm = T)
+      # if (min(new_tbl$sample_n[!is.na(new_tbl$demogr_grp)]) < min_cell){
+
+      if (min_sample_n < min_cell){
+        #util.warn("Cell bellow min size")
+        new_tbl$pct_good <- "remove"
+        new_tbl$sample_n <- "remove"# this controls if the category will be deleted
+        #categories_to_remove <- c(categories_to_remove, demog_var) %>% unique
+      }
+      
+
+      if (!("remove" %in% new_tbl$sample_n)) {
+        tbl_df[nrow(tbl_df)+1,] <- c(demog_var, NA, NA,NA)
+        names(new_tbl)[names(new_tbl) == demogr_vars[[demog_var]]] <- "demogr_grp"
+        tbl_df <- rbind(tbl_df, new_tbl) # add the new table only if it is not marked for removal
+      }
+      
+    }
+    tbl_df$pct_good <- tbl_df$pct_good %>% as.numeric %>% round(.,2) %>% '*'(.,100) 
+    tbl_df$pct_good[!is.na(tbl_df$pct_good)] <- tbl_df$pct_good[!is.na(tbl_df$pct_good)]  %>%
+      paste(., "%", sep = "")
+    tbl_df$concat_col <- paste(tbl_df$pct_good, " (n=",tbl_df$n_good,")", sep = "")
+    tbl_df$concat_col[is.na(tbl_df$pct_good)] <- NA
+    tbl_df$pct_good <- tbl_df$concat_col
+    tbl_df$concat_col <- NULL
+    tbl_df$n_good <- NULL
+    #tbl_df$sample_n <- NULL
+    
+    # remove rows with NA in demogr_group
+    tbl_df <- tbl_df[!is.na(tbl_df$demogr_grp),]
+    
+    old_vals <- c(  "Race", "Parent Education", "Gender" )
+    new_vals <- c(  "BOLD_RACE", "BOLD_PARENT EDUCATION", "BOLD_GENDER" )
+    #new_vals <- old_vals %>% toupper 
+  
+    
+    tbl_df$demogr_grp <- tbl_df$demogr_grp %>% util.recode(.,old_vals,new_vals)
+    
+    
+    # rename columns
+    names(tbl_df)[names(tbl_df) == "demogr_grp"] <- "Demographic Group"
+    names(tbl_df)[names(tbl_df) == "sample_n"] <- "Total n"
+    names(tbl_df)[names(tbl_df) == "pct_good"] <- 
+      items_cp$tbl_col_title[items_cp$variables == variable]
+    names(tbl_df) <- names(tbl_df) %>% gsub("%", "Percent",.)
+    cat("<h2>")
+    cat(items_cp$tbl_title[items_cp$variables == variable])
+    cat("</h2>")
+    #util.html_table(tbl_df)
+    print(xtable(tbl_df), 
+        type="html",
+        include.rownames = FALSE,
+        html.table.attributes =
+          getOption("xtable.html.table.attributes",
+                    "border=0, class='xtable'"),
+        sanitize.text.function = bold.somerows)
+    cat("<div class='page-break'></div>")
+    appendix_tbl_new <- tbl_df
+    names(appendix_tbl_new) <- c("group","perc_good", "total_n")
+    appendix_tbl_new$school <- school_name
+    appendix_tbl_new$variable <- variable
+    appendix_tbl <- bind_rows(appendix_tbl, appendix_tbl_new)
+  }
+  
+}
+# add order of factors
+
+```

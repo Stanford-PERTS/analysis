@@ -1,0 +1,223 @@
+---
+title: "Power Analysis for EP 2018-19"
+author: "Sarah Gripshover"
+date: "August 2018"
+output: 
+    html_document:
+        fig_caption: no
+        toc: yes
+        theme: spacelab
+        css: ~/Sites/gymnast/Rmd/rmd_styles.css
+---
+
+
+# Introduction
+
+
+# Course-level outcomes
+
+We will likely have course-level data from EOS (50 classes), Relay (50 classes), NTC (15-30 classes), and Summit (5 classes), so conservatively 100 classes in total. We’re maybe going to collect data from a district or two as well. What effect sizes can we detect with these data?
+
+## Student-level analyses
+
+Our first set of analyses will estimate effects at the student level (i.e., how well students' experience of learning conditions map on to students' outcomes). The models assume shared variance within-classrooms.
+
+```{r message=FALSE, warning=FALSE, results='asis'}
+library(MASS)
+library("dplyr")
+library("xtable")
+source("~/Sites/gymnast/R/util.R")
+library("tidyr")
+
+# set parameters
+
+# user parameters
+model_formula <- "outcome_re ~ mean_LC + survey_grades"
+prob_threshold <- .05
+n_sims <- 100
+Vclass <- 1 # value for shared variance within classroom
+
+# properties of data
+
+# numbers
+n_classes <- 100
+n_students_per_class <- 25
+
+# variable names & properties (mus and sds must appear in same order as var_names)
+var_names <- c("survey_grades", "mean_LC", "outcome")
+mus <- c(4, 4, 4)
+sds <- c(2, .1, 2)
+
+# r values
+r_survey_grades_outcome <- .5
+r_mean_LC_outcome <- .25 # this is the effect size we're testing
+r_mean_LC_survey_grades <- .4 # 
+
+####################################################################################
+
+# create a correlation matrix based on r values
+generate_cor_mat <- function(r_mean_LC_outcome, r_mean_LC_survey_grades, r_survey_grades_outcome){
+    cor_mat <- matrix(
+        c(1, r_mean_LC_survey_grades, r_survey_grades_outcome,
+          r_mean_LC_survey_grades, 1, r_mean_LC_outcome,
+          r_survey_grades_outcome, r_mean_LC_outcome, 1),
+        nrow = 3, ncol = 3
+    )
+    return(cor_mat)
+}
+
+
+generate_data <- function(mus, sds, n_students_per_class, n_classes, cor_mat, var_names, Vclass){
+    # generates & returns data.frame with specified parameters
+    
+    # create the correlated data
+    
+    # number of cases
+    n_rows <- n_students_per_class * n_classes
+    # Get a covariance matrix from corr mat by multiplying by the product of the two standard deviations vectors.
+    sd_prods <- sds %*% t(sds)
+    cov_mat <- cor_mat * sd_prods
+    df <- mvrnorm(n = n_rows, mu = mus, Sigma = cov_mat) %>%
+        as.data.frame
+    names(df) <- var_names
+    
+    # now add error variance for classes (and maybe, students)
+    df$student_id <- 1:n_rows
+    df$class_id <- rep(1:n_classes, each = n_students_per_class)
+    
+    class_re <- rnorm(n_classes, 0, sqrt(Vclass))
+    df$class_re <- class_re[df$class_id]
+    df$outcome_re <- df$outcome + df$class_re
+    
+    # double-check the correlation structure
+    # if(!all(round(cor(df[var_names]), 2) == cor_mat)){
+    #     util.warn("Generated data correlation matrix does not match cor_mat input")
+    # }
+    
+    # still need to adjust the variances to match sds
+    
+    return(df)
+}
+
+model_data <- function(df, model_formula){
+    model <- lm(model_formula, data = df)
+    return(model)
+}
+
+run_sims <- function(n_sims, mus, sds, n_students_per_class, n_classes, cor_mat, var_names, Vclass){
+    # generates & analyzes fake data with specified parameters, returns a list of models
+    models <- list()
+    for(i in 1:n_sims){
+        df <- generate_data(mus, sds, n_students_per_class, n_classes, cor_mat, var_names, Vclass)
+        model <- model_data(df, model_formula)
+        models[[i]] <- model
+    }
+    return(models)
+}
+
+summarise_power <- function(models, prob_threshold){
+    
+    probs <- lapply(models, function(model) return(coef(summary(model))[2, 4])) %>% unlist
+    betas <- lapply(models, function(model) return(coef(summary(model))[2, 1])) %>% unlist
+    
+    power_summary <- data.frame(
+        prob = probs,
+        beta = betas
+    ) %>%
+        mutate(
+            is_pos_hit = beta > 0 & prob <= prob_threshold,
+            is_pos_miss = beta > 0 & prob > prob_threshold,
+            is_neg_hit = beta < 0 & prob <= prob_threshold,
+            is_neg_miss = beta < 0 & prob > prob_threshold,
+            prob_10 = prob <= .1,
+            prob_05 = prob <= .05,
+            prob_cat = ifelse(prob_05, ".05", ifelse(prob_10, ".10", "ns"))
+        )
+    
+    return(power_summary)
+}
+
+cor_mat <- generate_cor_mat(r_mean_LC_outcome, r_mean_LC_survey_grades, r_survey_grades_outcome)
+models <- run_sims(n_sims, mus, sds, n_students_per_class, n_classes, cor_mat, var_names, Vclass)
+power_summary <- summarise_power(models, prob_threshold)
+
+ggplot(power_summary, aes(x = beta, color = prob_cat, fill = prob_cat)) +
+    geom_histogram() +
+    geom_vline(xintercept = 0)
+
+
+```
+
+Now run sims for different values of r to figure out what the minimum effect is that can be detected with the proposed sample characteristics, modeling technique, etc. Note that for different values of the non-main-effect correlations in our framework (i.e., for values of `r_survey_grades_outcome` and `r_mean_LC_survey_grades`), our main-effect correlation (`r_mean_LC_outcome`) becomes vulnerable to suppression effects below a certain value.
+
+In addition to our power threshold, we want to know where that "inflection point" is, where the majority of beta values start being negative and increasingly statistically significant. 
+
+```{r}
+# r values
+rs_survey_grades_outcome <- seq(.2, .9, by = .1) # we actually know more or less what these values are.
+rs_mean_LC_survey_grades <- seq(0, .9, by = .1)
+rs_mean_LC_outcome <- seq(.15, .3, by = .01)
+
+power_threshold <- .8 # this is the desired statistical power
+
+# other params
+n_sims <- 20
+
+# create a cartesian product of all the r-vectors above
+non_effect_corrs_df <- expand.grid(
+    rs_survey_grades_outcome,
+    rs_mean_LC_survey_grades
+) %>%
+    setNames(c("survey_grades_outcome", "mean_LC_survey_grades"))
+
+# for each possible combination of non-effect-r's:
+for(row in 1:nrow(non_effect_corrs_df)){
+    
+    # for all the effect_size values being tested, compute the proportion positive and negative hits 
+    # line them up in an object like r_summary (unmelted), and find the first row where neg_hit_props == 0 and
+    # pos_hit_props >= power_threshold. This is the minimum detectable effect.
+    # save the minimum detectable effect in the non_effect_corrs_df (minimum_effect column)
+    # also save the inflection point; i.e., the highest effect-size r at which we start to see suppression (max_suppression column)
+    
+    # so we'll have a data.frame with the same number of rows as non_effect_corrs_df, and two additional columns:
+    # one for the min detectable effect, and one for the highest effect r-value where some of the models showed significant suppression.
+}
+
+# then I'll want some way of graphing the relation of both non-effect r-values to the min detectable effect and max suppression values.
+# maybe super-imposed line graphs?
+
+
+
+
+get_power_summaries <- function(cor_mat, n_sims, mus, sds, n_students_per_class, n_classes, var_names, Vclass){
+    power_summaries <- list()
+}
+
+rcov <- r_mean_LC_survey_grades
+for(r in rs_mean_LC){
+    cor_mat <- generate_cor_mat(r_mean_LC_outcome = r, r_mean_LC_survey_grades = rcov, r_survey_grades_outcome)
+    models <- run_sims(n_sims, mus, sds, n_students_per_class, n_classes, cor_mat, var_names, Vclass)
+    power_summary <- summarise_power(models, prob_threshold)
+    # what is the proportion of positive hits and negative hits?
+    power_summaries[[which(rs_mean_LC == r)]] <- power_summary
+}
+
+# count all the positive/negative hits
+pos_hit_props <- lapply(power_summaries, function(df) sum(df$is_pos_hit)/nrow(df)) %>% unlist
+neg_hit_props <- lapply(power_summaries, function(df) sum(df$is_neg_hit)/nrow(df)) %>% unlist
+
+r_summary <- data.frame(effect_size = rs_mean_LC_outcome, pos_hit_props = pos_hit_props, neg_hit_props = neg_hit_props) %>%
+    melt(id.vars = "effect_size") %>%
+    mutate(direction = gsub("_hit_props", "", variable)) %>%
+    rename(proportion_hits = value)
+r_summary
+
+ggplot(r_summary, aes(effect_size, proportion_hits, color = direction)) +
+    geom_line() +
+    geom_point()
+
+```
+
+
+
+# Date-linked outcomes

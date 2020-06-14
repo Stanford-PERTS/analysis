@@ -1,0 +1,549 @@
+---
+title: "CG17 prelimiinary analysis (internal)"
+author: "Sarah Gripshover"
+date: "September 2017"
+output: 
+  html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: ~/Sites/gymnast/Rmd/RMD_styles.css
+---
+
+# Load and clean data
+
+```{r results = 'asis', message = FALSE, warning = FALSE}
+## Load libraries
+# source gymnast functions
+tryCatch({
+    source("~/Sites/gymnast/R/util.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_graphing.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_scale_computation.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_data_summaries.R", chdir = TRUE)
+}, error = function(e){
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_legacy.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_qualtrics_cleaning.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_graphing.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_scale_computation.R")
+})
+
+library("tidyr")
+
+# set stringsAsFactors to FALSE, and add any other global R settings
+options(stringsAsFactors = FALSE)
+
+# set results to 'asis' for all chunks
+# (can also add any global rmarkdown settings here)
+opts_chunk$set(results = 'asis', warning = FALSE, message = FALSE)
+
+## Local helper functions
+# lh.helper_function <- function()
+wrap_text <- function(text, width=35) {
+    wtext <- paste( strwrap(text,width=width), collapse=" \n ")
+    return(wtext)
+}
+
+## Load data
+
+s_raw_paths <- util.find_crypt_paths(
+    list(
+        complete = "CG17_OFFICIAL_1_Sep19.csv",
+        partial = "CG17_OFFICIAL_1-Responses in Progress_Sep19.csv"
+    )
+)
+
+s_complete <- read.csv(s_raw_paths$complete)
+s_partial <- read.csv(s_raw_paths$partial)
+
+d_initial <- qc.clean_qualtrics(s_complete)
+d_initial$LastActivity <- NA
+d_initial <- qc.rbind_inprogress(s_partial, d_initial)
+
+REPO <- "~/Sites/analysis/"
+var_desc <- read.csv(REPO %+% "CG17/CG17_variable_descriptions.csv")
+
+## (note that we will skip de-identification because there is no data output
+# in this script, and no individual identifiable data in the dataset (except
+# maybe student survey responses))
+
+
+### Clean columns
+
+#### Standardize column names
+
+# define d_rn (will stand for d, renamed)
+d_rn <- d_initial
+    
+# Because Qualtrics automatically dummy-codes checkbox variables, but
+# DOESN'T record what the dummy codes correspond to (sigh), we have to 
+# manually recode values for the race variable, which was administered 
+# as a checkbox.
+
+race_values <- c("AA", "Asian", "Nat", "ME", "PI", "Eu", "Oth")
+old_race_cols <- names(d_rn)[grep("race", names(d_rn))]
+old_race_cols <- old_race_cols[!old_race_cols %in% "race_TEXT"]
+new_race_cols <- gsub("\\.[0-9]+", "", old_race_cols) %+% "_" %+% race_values
+
+names(d_rn) <- util.recode(names(d_rn), old_race_cols, new_race_cols)
+
+
+
+#### Standardize column values
+# d_rc will stand for "d, recoded"
+d_rc <- d_rn
+
+new_student_key <- list(old = c(1,2,3), new = c("incoming", "new", "returning"))
+d_rc$new_student <- util.recode(
+    d_rc$new_student,
+    new_student_key$old,
+    new_student_key$new
+)
+
+gender_key <- list(old = c(1,2,3,4), new = c("Male", "Female", "Nonbinary", "Nonbinary"))
+d_rc$gender <- util.recode(d_rc$gender, gender_key$old, gender_key$new)
+
+# the non-binary people should be counted, but they will mess up the cell sizes.
+# in other projects, we recode these people to female. I'm  not sure that's what 
+# we should do here...but it would be handy to have a simplified version of the variable 
+# on-hand
+d_rc$gender_simplified <- util.recode(d_rc$gender, "Nonbinary", "Female")
+d_rc$female <- d_rc$gender_simplified %in% "Female"
+    
+activity2_key <- list(
+    old = c(1, 2, 3, 4, 5),
+    new = c("read out loud", "handout", "discussed only", "no instructions", "dont remember")
+)
+
+d_rc$activity_2 <- util.recode(d_rc$activity_2, activity2_key$old, activity2_key$new)
+
+student_loc_key <- list(old = c(1,2,3), new = c("homework", "in class", "homework"))
+d_rc$student_loc <- util.recode(d_rc$student_loc, student_loc_key$old, student_loc_key$new)
+
+d_rc$race_simplified <- NA
+d_rc$race_simplified[d_rc$race_Asian | d_rc$race_Eu] <- "White/Asian"
+d_rc$race_simplified[d_rc$race_AA | d_rc$race_Nat | d_rc$race_Oth | d_rc$race_PI | d_rc$race_ME] <- "Blk/Nat/Lat/Oth"
+d_rc$race_disadv <- d_rc$race_simplified %in% "Blk/Nat/Lat/Oth"
+
+d_rc$organization_name_wrapped <- sapply(d_rc$organization_name, function(x) wrap_text(x, 15))
+
+### Clean rows
+
+#### Remove testers (d, no testers)
+d_nt <- d_rc[!d_rc$organization_name %in% "Arnrow Test U", ]
+
+#### Logic for handling duplicated index values
+
+# the index in this dataset is participant_id
+# 1. Remove all rows where participant ID is NA
+# 2. Where IDs are duplicated, take each participant's most recent entry
+
+# d_dh stands for d, duplicates handled
+d_dh <- d_nt
+pid_is_blank <- util.is_blank(d_dh$participant_id)
+util.passed(sum(pid_is_blank) %+% " rows removed with blank participant ids. " %+%
+                "These likely correspond to testers.")
+d_dh <- d_dh[!pid_is_blank, ]
+
+d_dh <- d_dh %>%
+    group_by(participant_id) %>%
+    arrange(StartDate) %>%
+    mutate(id_instance = 1:n(),
+           max_instances = n(),
+           keep = id_instance == max_instances)
+
+n_dropped <- sum(!d_dh$keep)
+d_dh <- d_dh[d_dh$keep, ]
+
+util.passed("Records corresponding to " %+% n_dropped %+% " rows " %+%
+                "were removed as duplicates. (" %+% 
+                as.character(round(n_dropped/nrow(d_dh), 2)*100) %+%
+                "% of data.) Where participant IDs were duplicated, " %+%
+                "the chronically last entry was always kept.")
+
+util.passed("After handling duplicates, " %+% nrow(d_dh) %+%
+                " rows remain in the final data.frame.")
+
+if(any(duplicated(d_dh$participant_id))){
+    util.warn("duplicates remain in object d_dh after duplicates " %+%
+                  "should have been cleaned. Investigate further.")
+}
+
+## compute scales & change scores
+
+d_scales <- sc.append_scales(d_dh, var_desc, add_z_score = TRUE)
+d_scales$gms_post_neg <- rowMeans(d_scales[c("gms_post_3", "gms_post_4")])
+
+d_scales$gms_diff <- d_scales$gms_post - d_scales$gms_pre
+d_scales$gms_diff_neg <- d_scales$gms_post_neg - d_scales$gms_pre
+
+# create fixed, mixed, and growth variables
+d_scales$gms_cat_pre <- NA
+d_scales$gms_cat_pre[d_scales$gms_pre <= 2] <- "fixed"
+d_scales$gms_cat_pre[d_scales$gms_pre <= 4 & !d_scales$gms_cat_pre %in% "fixed"] <- "mixed"
+d_scales$gms_cat_pre[d_scales$gms_pre > 4] <- "growth"
+d_scales$gms_growth_pre <- d_scales$gms_cat_pre == "growth"
+
+d_scales$gms_cat_post <- NA
+d_scales$gms_cat_post[d_scales$gms_post <= 2] <- "fixed"
+d_scales$gms_cat_post[d_scales$gms_post <= 4 & !d_scales$gms_cat_post %in% "fixed"] <- "mixed"
+d_scales$gms_cat_post[d_scales$gms_post > 4] <- "growth"
+d_scales$gms_growth_post <- d_scales$gms_cat_post == "growth"
+
+d_scales$gms_cat_post_neg <- NA
+d_scales$gms_cat_post_neg[d_scales$gms_post_neg <= 2] <- "fixed"
+d_scales$gms_cat_post_neg[d_scales$gms_post_neg <= 4 & !d_scales$gms_cat_post_neg %in% "fixed"] <- "mixed"
+d_scales$gms_cat_post_neg[d_scales$gms_post_neg > 4] <- "growth"
+d_scales$gms_growth_post_neg <- d_scales$gms_cat_post_neg == "growth"
+
+d_scales$gms_pre_growth <- ifelse(d_scales$gms_cat_pre %in% "growth", 1, 0)
+d_scales$gms_post_growth <- ifelse(d_scales$gms_cat_post %in% "growth", 1, 0)
+d_scales$gms_post_neg_growth <- ifelse(d_scales$gms_cat_post_neg %in% "growth", 1, 0)
+
+d_scales$gms_pre_mixed <- ifelse(d_scales$gms_cat_pre %in% "mixed", 1, 0)
+d_scales$gms_post_mixed <- ifelse(d_scales$gms_cat_post %in% "mixed", 1, 0)
+d_scales$gms_post_neg_mixed <- ifelse(d_scales$gms_cat_post_neg %in% "mixed", 1, 0)
+
+d_scales$gms_pre_fixed <- ifelse(d_scales$gms_cat_pre %in% "fixed", 1, 0)
+d_scales$gms_post_fixed <- ifelse(d_scales$gms_cat_post %in% "fixed", 1, 0)
+d_scales$gms_post_neg_fixed <- ifelse(d_scales$gms_cat_post_neg %in% "fixed", 1, 0)
+
+## create melted dataset for pre/post analyses
+pre_vars <- c("gms_pre")
+post_vars <- c("gms_post", "gms_post_neg")
+demog_vars <- c("gender_simplified", "race_simplified")
+id_vars <- c("participant_id", "organization_name", "organization_id", "organization_name_wrapped")
+dm <- melt(
+    d_scales[c(id_vars, demog_vars, pre_vars, post_vars)],
+    id.vars = c(id_vars, demog_vars)
+) %>%
+    separate(variable, into = c("measure", "pre_post", "pos_neg"), sep = "_", fill = "right")
+dm$pos_neg[is.na(dm$pos_neg) & !is.na(dm$pre_post)] <- "all"
+dm$pre_post <- factor(dm$pre_post, c("pre", "post"))
+
+
+pre_shift_vars <- c("gms_pre_fixed", "gms_pre_mixed", "gms_pre_growth")
+post_shift_vars <- c("gms_post_fixed", "gms_post_mixed", "gms_post_growth")
+dm_shift <- melt(
+    d_scales[c(id_vars, demog_vars, pre_shift_vars, post_shift_vars)],
+    id.vars = c(id_vars, demog_vars)
+) 
+dm_shift$status <- NA
+dm_shift$status[grep("_fixed", dm_shift$variable)] <- "fixed"
+dm_shift$status[grep("_mixed", dm_shift$variable)] <- "mixed"
+dm_shift$status[grep("_growth", dm_shift$variable)] <- "growth"
+dm_shift$pre_post <- NA
+dm_shift$pre_post[grep("_pre", dm_shift$variable)] <- "pre"
+dm_shift$pre_post[grep("_post", dm_shift$variable)] <- "post"
+dm_shift$pre_post <- factor(dm_shift$pre_post, c("pre", "post"))
+dm_shift$status <- factor(dm_shift$status, c("fixed", "mixed", "growth"))
+
+
+
+# create a college-level dataset
+items_for_college_summary <- var_desc$var_name[var_desc$summarise_by_college]
+scales <- c(unique(var_desc$scale[!util.is_blank(var_desc$scale)]), "gms_post_neg")
+
+mean_narm <- function(x) mean(x, na.rm = TRUE)
+
+d_college <- d_scales %>%
+    group_by(organization_id) %>%
+    summarise_at(
+        c(items_for_college_summary, scales, "gms_diff", "gms_diff_neg"),
+        .funs = funs(mean_narm)
+    )
+demo_by_college <- d_scales %>%
+    group_by(organization_id) %>%
+    summarise(
+        prop_female = mean(gender_simplified %in% "Female"),
+        prop_disadv_race = mean(race_simplified %in% "Blk/Nat/Lat/Oth"),
+        total_participants = n()
+    )
+
+# merge info together
+d_college <- merge(
+    d_college,
+    unique(d_scales[c("organization_name", "organization_id", "organization_name_wrapped")]),
+    by = "organization_id"
+)
+d_college <- merge(d_college, demo_by_college, by = "organization_id")
+write.csv(d_college, REPO %+% "/CG17/college_csv.csv", row.names = FALSE)
+```
+
+# Purpose of analysis
+
+The main purpose of the analysis of the CG17 data is to help us determine what to put in the CG17 reports. A secondary goal is to understand the data ourselves, with the hope of improving future programs.
+
+# Treatment effects
+
+The first goal of the analysis is to learn what effect (if any) the treatment had on mindset scores (pre- to post- comparison), and how this effect size differs by institution. We will compare the magnitude of this effect to that observed in previous studies. This is our best way of linking CG17 results to results from previous work.
+
+## Over-all treatment effect
+
+### General
+
+* In general, was there a statistically significant treatment effect (pre/post)? (i.e., `gms ~ pre_post + (1|subject_ID)`)
+    + YES.
+* I'm concerned about item effects. Can we observe similar effects considering just negatively worded items?
+    + Works for negatively worded items too
+* How big is the effect?
+    + Almost a full scale point, way bigger than in previous studies (but with no delay between measurements, so we'd expect it to be bigger.)
+* What if instead of over-all scale values, we reported % of students who shifted from fixed/mixed to growth?
+
+```{r}
+
+lmer(value ~ pre_post + (1 | participant_id), data = dm[dm$pos_neg %in% "all",]) %>%
+    summary %>%
+    util.print_pre
+
+# box-plot of pre/post effects
+
+pre_post_boxplot <- ggplot(dm[dm$pos_neg %in% "all",], aes(pre_post, value, fill = pre_post)) +
+    geom_boxplot()
+pre_post_boxplot
+
+
+# examine negatively worded items only (note that the single pre-item was a 
+# negatively worded item)
+
+lmer(value ~ pre_post + (1 | participant_id),
+     data = dm[dm$pos_neg %in% "neg" | dm$pre_post %in% "pre",]) %>%
+    summary %>%
+    util.print_pre
+
+pre_post_boxplot_neg <- ggplot(
+    dm[dm$pos_neg %in% "neg" | dm$pre_post %in% "pre", ],
+    aes(pre_post, value, fill = pre_post)
+) + geom_boxplot() +
+    ggtitle("Negatively worded items only")
+pre_post_boxplot_neg
+
+
+```
+
+### Shifted from Fixed/Mixed to growth
+
+```{r}
+
+sig_stars <- function(measure_col, x_col, sig_star_col, text_size = ug.text_size){
+    geom_text(
+        aes_string(y = measure_col, x = x_col, label = sig_star_col), 
+        stat="summary", 
+        fun.y="mean", 
+        vjust = 0,
+        hjust = 0,
+        size = ug.text_size/2,
+        color = "black",
+        fontface="bold"
+    )
+}
+
+sig_stars <- function(pvals){
+    ifelse(pvals < .001, "***", ifelse(pvals < .01, "**", ifelse(pvals < .05, "*", "")))
+}
+
+m_growth <- glmer(
+    value ~ pre_post + (1 | participant_id),
+    data = dm_shift[dm_shift$status %in% "growth", ],
+    family = "binomial"
+)
+p_growth <- summary(m_growth)[["coefficients"]][2,"Pr(>|z|)"]
+
+dsum_shift <- dm_shift %>%
+    mutate(
+        p_growth = p_growth,
+        growth_stars = sig_stars(p_growth)
+    ) %>%
+    group_by(pre_post, status) %>%
+    summarise(
+        prop = mean(value),
+        growth_stars = first(growth_stars)
+    )
+
+shift_barplot <- ggplot(dsum_shift, aes(pre_post, prop, fill = status)) +
+    geom_bar(stat = "identity", position = "dodge", color = "black") +
+    scale_fill_manual(values = c("red", "yellow", "green")) +
+    ug.ht +
+    coord_cartesian(ylim = c(0, 1))
+    
+shift_barplot
+
+
+```
+
+
+### Disaggregated by race and gender
+
+* Check for moderation of the above results by race and gender
+    + Effects visually seem pretty similar broken down by race
+    + Same with gender
+* Visually examine how the magnitude of effects differs by demographic variables
+
+```{r, results ='markup'}
+# box-plot of centered and not-centered pre/post effects...
+    # paneled by race
+    # paneled by gender
+
+pre_post_boxplot + facet_grid(~ race_simplified) + ggtitle("Results by race category")
+pre_post_boxplot + facet_grid(~ gender_simplified) + ggtitle("Results by gender")
+
+# possibly ds.summarise some moderation models (or formulae)
+
+```
+
+
+## Treatment effects by institution
+
+### General
+
+* How do the treatment effects differ by institution?
+    + pretty consistent
+* Are any effects in the wrong direction? See what schools they are and what is going on there.
+    + so far, just one! Seems pretty likely not a concern, but should build conditional logic in just in case
+
+```{r, fig.height=16}
+
+pre_post_boxplot + facet_wrap( ~ organization_name_wrapped)
+pre_post_boxplot_neg + facet_wrap( ~ organization_name_wrapped)
+
+#shift_barplot + facet_wrap( ~ organization_name_wrapped)
+```
+
+```{r}
+# histogram
+ggplot(d_college[d_college$total_participants > 20, ], aes(gms_diff_neg)) +
+    geom_histogram() +
+    geom_vline(xintercept = 0) +
+    ggtitle("histogram of pre/post change scores by site") +
+    xlab("change scores from pre to post (in number of scale points)")
+
+
+# check 2 colleges
+c1 <- d_scales %>%
+    filter(organization_name %in% "University of Alaska Southeast")
+t.test(c1$gms_diff_neg)
+
+c2 <- d_scales %>%
+    filter(organization_name %in% "California State University, Sacramento")
+t.test(c2$gms_diff_neg, mu = 0)
+    
+```
+
+## [later] Examine treatment fidelity questions
+
+### Descriptives
+
+### How do treatment fidelity measures relate to treatment effects?
+
+
+# Analyze learning conditions measures
+
+The second goal is to get a sense of what learning conditions look like across institutions, and what kind of gaps exist in such conditions, and what the min_good and max_good thresholds should be. We also want to validate the LC measures against established psychometrics, to the extent that we can.
+
+## Descriptive analyses of learning conditions
+
+## Broken down by demographics
+
+```{r}
+dlc_m <- melt(
+    d_scales[c(id_vars, demog_vars, "engagement", "relevance", "caring", "community", "belonging", "gms_pre") ],
+    id.vars = c(id_vars, demog_vars, "engagement", "gms_pre")
+)
+
+ggplot(dlc_m, aes(race_simplified, value, fill = race_simplified)) +
+    geom_boxplot() +
+    facet_grid(. ~ variable)
+
+ggplot(dlc_m, aes(gender_simplified, value, fill = gender_simplified)) +
+    geom_boxplot() +
+    facet_grid(. ~ variable)
+
+lc_formulae <- ds.build_glm1_formulas(
+    dvs = c("relevanceance", "caring", "community", "belonging"),
+    ivs = c("race_disadv", "female")
+)
+
+# lc_models <- ds.glm1s(lc_formulae, d_scales)
+# lc_summary <- ds.get_model_summary_df(lc_models)
+# 
+# lc_summary %>%
+#     select(dv, iv, dv_mean, iv_coef, iv_se, iv_stat, iv_p) %>%
+#     mutate(iv_p = round(iv_p, 3)) %>%
+#     util.html_table()
+```
+
+
+## Zero-order correlations
+
+* Growth Mindset—very surprisingly, relates to almost nothing!
+* Belonging—surprisingly, doesn't relate strongly much to anything. I'm especially surprised it doesn't relate to engagement.
+* Engagement—relates to some of the learning conditions but not growth mindset
+* Learning conditions—
+    + Pretty surprised that community doesn't correlate with belonging at all!
+    + Looks like they all have decent correlations with engagement, but not with growth mindset or belonging.
+
+_Note that with a very large sample, very small correlation values are likely to be statistically significant, so I'm not even even printing that here._
+```{r}
+
+# correlation table
+items_for_cor_table <- var_desc$var_name[var_desc$correlation_table]
+cor(d_scales[c(items_for_cor_table, scales)], use = "pairwise.complete.obs") %>%
+    round(2) %>%
+    util.print_pre()
+
+# what about for just returning students (for whom gms might have had more 
+# of a chance to accumulate effects)?
+
+# cor(
+#     d_scales[
+#         d_scales$new_student %in% "returning",
+#              c(items_for_cor_table, scales)
+#     ],
+#     use = "pairwise.complete.obs"
+# ) %>%
+#     round(2) %>%
+#     util.print_pre()
+
+# scatter plots with lines
+```
+
+## Relation to validated psychometrics
+
+- Caring and community show good relationship to engagement
+- Relevance weirdly shows a u-shaped relationship. Could it be because the items are so instrumental? (e.g., there could be trade-offs with intrinsic motivation)
+- Very modest relations to growth mindset
+
+```{r}
+
+
+lm(engagement ~ relevance + caring + community + belonging + gms_pre, data = d_scales) %>%
+    summary %>% util.print_pre
+
+ggplot(dlc_m, aes(value, engagement)) +
+    geom_smooth(method = "loess") +
+    facet_grid(variable ~ .) +
+    ggtitle("Learning conditions predicting engagement")
+
+ggplot(dlc_m, aes(value, gms_pre)) +
+    geom_smooth(method = "loess") +
+    facet_grid(variable ~ .) +
+    ggtitle("Learning conditions predicting growth mindset")
+
+# See which LCs account for unique variance
+# gms_pre ~ all_LCs
+# engagement_pre ~ all_LCs
+```
+
+# Establish connection to retention outcomes
+
+The final goal is to establish some thread of connection between the treatment effects and retention outcomes.
+
+First and foremost, get retention/completion data for each institution, then link to survey measures aggregated to org level. Then, run the following analyses (and appropriate graphs):
+
+```{r}
+# completion_and_retention ~ gms_pre_avg
+# completion_and_retention ~ each_LC_avg
+# completion_and_retention ~ all_LCs_avg
+
+```
+    

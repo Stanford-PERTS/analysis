@@ -1,0 +1,113 @@
+---
+title: "DESCRIPTIVE TITLE"
+author: "NAMES OF CONTRIBUTING ANALYST(S)"
+date: "MONTH/YEAR (USUALLY)"
+output: 
+  html_document:
+    fig_caption: no
+    toc: yes
+    theme: spacelab
+    css: ~/Sites/gymnast/Rmd/RMD_styles.css
+---
+
+# Introduction
+
+[DESCRIBE THE PURPOSE AND CONTENT OF THIS DOCUMENT]
+
+## Input Files
+
+[LIST AND DESCRIBE ALL FILES THAT ARE READ INTO THIS SCRIPT]
+
+## Output Files
+
+[LIST AND DESCRIBE ALL FILES THAT ARE WRITTEN FROM THIS SCRIPT]
+
+
+# Setting the environment
+
+## Set User Inputs
+[SET USER INPUT VARIABLES BELOW; USER INPUT VARIABLES ARE
+INFORMATION THAT NEEDS TO BE SET BY THE ANALYST; E.G., 
+OPTIONS TO EVALUATE PARTICULAR CHUNKS, ANY SCRIPT-LEVEL 
+CONDITIONAL LOGIC, ETC.CONSTANTS SHOULD BE IN ALL CAPS]
+
+```{r results='asis'}
+
+```
+
+
+## Load libraries
+
+```{r results='asis', message=FALSE, warning=FALSE}
+# source gymnast functions
+tryCatch({
+    source("~/Sites/gymnast/R/util.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_qualtrics_cleaning.R", chdir = TRUE)
+    source("~/Sites/gymnast/R/util_graphing.R", chdir = TRUE)
+}, error = function(e){
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_legacy.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_qualtrics_cleaning.R")
+    source("https://raw.githubusercontent.com/PERTS/gymnast/master/R/util_graphing.R")
+})
+
+# source any additional packages that are NOT loaded in gymnast
+# note that almost any package we would ever use is always in gymnast
+
+# set stringsAsFactors to FALSE, and add any other global R settings
+options(stringsAsFactors = FALSE)
+
+# set results to 'asis' for all chunks
+# (can also add any global rmarkdown settings here)
+opts_chunk$set(results = 'asis')
+```
+
+## Local helper functions
+
+[PUT ALL YOUR LOCALLY-CREATED HELPER FUNCTIONS HERE. MAKE SURE TO 
+ CONTRIBUTE ANY GOOD ONES TO the [Miscellaneous Code Archive](https://docs.google.com/document/d/10_K8clWHUQIbO5BWXViiZBXMbRDkni7ypuBJ54l_KWE/edit) 
+ BY CREATING A [gist](https://gist.github.com/).]
+
+
+```{r}
+
+# lh.helper_function <- function()
+
+```
+    
+    
+# Merge data
+    
+In this section, you will merge data of different kinds; e.g., rbinding 
+pre-processed data or merging datasets of different types (e.g., merging 
+demographic info from baseline_records.csv with course_records.csv).
+
+
+## Rbind like datasets
+
+```{r}
+# use util.rbind_union
+```
+
+
+
+## Aggregate and cast data
+
+
+### Define relative time variable on time-dependent outcomes
+
+
+### Create aggregated outcomes (by term, year, etc.)
+
+
+## Merge unlike datasets
+
+
+### Compute variables on merged data
+
+[THESE ARE VARIABLES THAT ]
+
+#### Create psychometric scales
+
+[WE COMPUTE SCALES ON THE FULLY MERGED DATA BECAUSE WE USUALLY WANT 
+ Z-SCORES CENTERED ON THE WHOLE SAMPLE, NOT WITHIN INDIVIDUAL SCHOOLS 
+ OR DATASETS]
